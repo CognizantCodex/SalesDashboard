@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 const AGENT_URL = 'http://127.0.0.1:3001/api/forecast/analyze';
+const CURRENT_URL = 'http://127.0.0.1:3001/api/forecast/current';
 const EXPORT_URL = 'http://127.0.0.1:3001/api/forecast/export.csv';
 
 export default function ForecastApp() {
@@ -23,9 +24,36 @@ export default function ForecastApp() {
     });
   }, [result]);
 
+  useEffect(() => {
+    loadStoredForecast(slsName, { silent: true });
+  }, []);
+
+  async function loadStoredForecast(name = slsName, options = {}) {
+    if (!options.silent) setLoading(true);
+    setError('');
+
+    try {
+      const url = `${CURRENT_URL}?slsName=${encodeURIComponent(name)}`;
+      const response = await fetch(url);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast.');
+
+      if (payload.available) {
+        setResult(payload);
+      } else if (!options.silent) {
+        setResult(null);
+        setError('No saved forecast data is available. Upload a workbook first.');
+      }
+    } catch (err) {
+      if (!options.silent) setError(err.message);
+    } finally {
+      if (!options.silent) setLoading(false);
+    }
+  }
+
   async function runAgent() {
     if (!workbook) {
-      setError('Choose a workbook first.');
+      await loadStoredForecast(slsName);
       return;
     }
 
@@ -54,6 +82,10 @@ export default function ForecastApp() {
   }
 
   async function exportCsv() {
+    if (!workbook && result?.rows?.length) {
+      exportRowsFromState();
+      return;
+    }
     if (!workbook) return;
 
     const formData = new FormData();
@@ -72,10 +104,23 @@ export default function ForecastApp() {
     }
 
     const blob = await response.blob();
+    downloadBlob(blob, `${slsName || 'SLS'}_Forecast_2026.csv`);
+  }
+
+  function exportRowsFromState() {
+    const lines = [['Account', 'Practice', 'Forecast_$K', 'Target_$K', 'Gap_$K']];
+    result.rows.forEach((row) => {
+      lines.push([row.account, row.practice, row.forecast.toFixed(2), row.target.toFixed(2), row.gap.toFixed(2)]);
+    });
+    const csv = lines.map((line) => line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n');
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${slsName || 'SLS'}_Forecast_2026.csv`);
+  }
+
+  function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${slsName || 'SLS'}_Forecast_2026.csv`;
+    link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -104,7 +149,7 @@ export default function ForecastApp() {
         <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8" />
         </svg>
-        <h1>SLS Forecast Agent <span>FY 2026</span></h1>
+        <h1>SLS Dashboard <span>FY 2026</span></h1>
       </header>
 
       <main className="container">
@@ -121,8 +166,14 @@ export default function ForecastApp() {
             <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 16V8m0 0-3 3m3-3 3 3M20 16.5A3.5 3.5 0 0 0 16.5 13H15a5 5 0 1 0-9.9 1.5" />
             </svg>
-            <p className="upload-title">{workbook ? workbook.name : 'Drop your workbook here'}</p>
-            <p className="upload-sub">{workbook ? 'Workbook selected - ready to analyse' : 'Supports .xlsb and .xlsx - processed by the Python agent'}</p>
+            <p className="upload-title">{workbook ? workbook.name : result?.database?.sourceFilename || 'Drop your workbook here'}</p>
+            <p className="upload-sub">
+              {workbook
+                ? 'Workbook selected - ready to analyse'
+                : result?.database?.rowsSaved
+                  ? `${result.database.rowsSaved.toLocaleString()} rows loaded from saved revenue_forecast data`
+                  : 'Supports .xlsb and .xlsx - processed by the Python agent'}
+            </p>
             <input
               type="file"
               accept=".xlsb,.xlsx,.xlsm"

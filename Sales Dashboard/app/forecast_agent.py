@@ -193,14 +193,19 @@ def analyze_forecast_rows(
     }
 
 
-def analyze_workbook(file_bytes: bytes, filename: str, sls_name: str, sheet_name: str = "Data") -> dict[str, Any]:
+def parse_workbook(file_bytes: bytes, filename: str, sheet_name: str = "Data") -> tuple[list[str], list[list[Any]], dict[str, int]]:
     values = _read_sheet(file_bytes, filename, sheet_name)
     if len(values) < 2:
         raise ValueError(f"{sheet_name} sheet appears empty.")
 
-    headers = values[0]
-    col_map = {str(header).strip(): index for index, header in enumerate(headers) if header is not None and str(header).strip()}
-    return analyze_forecast_rows(values[1:], col_map, sls_name)
+    headers = [str(header).strip() if header is not None and str(header).strip() else f"Column {index + 1}" for index, header in enumerate(values[0])]
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    return headers, values[1:], col_map
+
+
+def analyze_workbook(file_bytes: bytes, filename: str, sls_name: str, sheet_name: str = "Data") -> dict[str, Any]:
+    _headers, rows, col_map = parse_workbook(file_bytes, filename, sheet_name)
+    return analyze_forecast_rows(rows, col_map, sls_name)
 
 
 def result_to_csv(result: dict[str, Any]) -> str:
