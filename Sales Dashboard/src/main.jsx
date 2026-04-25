@@ -1,10 +1,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import ForecastApp from './ForecastApp.jsx';
+import SalesForecast from './sales_forecast.jsx';
 import './styles.css';
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ForecastApp />
+    <SalesForecast />
   </React.StrictMode>
 );

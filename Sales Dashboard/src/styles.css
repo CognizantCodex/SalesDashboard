@@ -55,6 +55,19 @@ header span {
   gap: 1rem;
 }
 
+.revenue-upload {
+  order: 1;
+}
+
+.pipeline-upload {
+  order: 2;
+}
+
+.revenue-flow {
+  order: 3;
+  grid-column: 1 / -1;
+}
+
 .upload-card {
   background: #fff;
   border-radius: 12px;
@@ -115,6 +128,12 @@ header span {
 .upload-sub {
   font-size: 14px;
   color: #7a8fa8;
+}
+
+.upload-error {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #c00000;
 }
 
 .search-area {
