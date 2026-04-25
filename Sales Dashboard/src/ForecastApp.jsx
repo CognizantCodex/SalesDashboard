@@ -2,15 +2,40 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 const AGENT_URL = 'http://127.0.0.1:3001/api/forecast/analyze';
 const CURRENT_URL = 'http://127.0.0.1:3001/api/forecast/current';
+const METADATA_URL = 'http://127.0.0.1:3001/api/forecast/current/metadata';
 const EXPORT_URL = 'http://127.0.0.1:3001/api/forecast/export.csv';
 
 export default function ForecastApp() {
   const [workbook, setWorkbook] = useState(null);
   const [slsName, setSlsName] = useState('Saxena, Gaurav');
   const [result, setResult] = useState(null);
+  const [savedForecast, setSavedForecast] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadSavedForecastMetadata() {
+      try {
+        const response = await fetch(METADATA_URL);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast metadata.');
+
+        if (!ignore && payload.available) {
+          setSavedForecast(payload.database);
+        }
+      } catch {
+        if (!ignore) setSavedForecast(null);
+      }
+    }
+
+    loadSavedForecastMetadata();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   const accountRows = useMemo(() => {
     if (!result?.accounts) return [];
@@ -24,21 +49,26 @@ export default function ForecastApp() {
     });
   }, [result]);
 
-  useEffect(() => {
-    loadStoredForecast(slsName, { silent: true });
-  }, []);
 
   async function loadStoredForecast(name = slsName, options = {}) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setResult(null);
+      setError('Enter an SLS name before running analysis.');
+      return;
+    }
+
     if (!options.silent) setLoading(true);
     setError('');
 
     try {
-      const url = `${CURRENT_URL}?slsName=${encodeURIComponent(name)}`;
+      const url = `${CURRENT_URL}?slsName=${encodeURIComponent(trimmedName)}`;
       const response = await fetch(url);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast.');
 
       if (payload.available) {
+        setSavedForecast(payload.database);
         setResult(payload);
       } else if (!options.silent) {
         setResult(null);
@@ -73,6 +103,7 @@ export default function ForecastApp() {
 
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Forecast agent failed.');
+      setSavedForecast(payload.database);
       setResult(payload);
     } catch (err) {
       setError(err.message);
@@ -139,6 +170,7 @@ export default function ForecastApp() {
     }
 
     setWorkbook(file);
+    setSavedForecast(null);
     setError('');
     setResult(null);
   }
@@ -166,12 +198,12 @@ export default function ForecastApp() {
             <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 16V8m0 0-3 3m3-3 3 3M20 16.5A3.5 3.5 0 0 0 16.5 13H15a5 5 0 1 0-9.9 1.5" />
             </svg>
-            <p className="upload-title">{workbook ? workbook.name : result?.database?.sourceFilename || 'Drop your workbook here'}</p>
+            <p className="upload-title">{workbook ? workbook.name : savedForecast?.sourceFilename || 'Drop your workbook here'}</p>
             <p className="upload-sub">
               {workbook
                 ? 'Workbook selected - ready to analyse'
-                : result?.database?.rowsSaved
-                  ? `${result.database.rowsSaved.toLocaleString()} rows loaded from saved revenue_forecast data`
+                : savedForecast?.rowsSaved
+                  ? `${savedForecast.rowsSaved.toLocaleString()} rows loaded from saved revenue_forecast data`
                   : 'Supports .xlsb and .xlsx - processed by the Python agent'}
             </p>
             <input
@@ -179,6 +211,7 @@ export default function ForecastApp() {
               accept=".xlsb,.xlsx,.xlsm"
               onChange={(event) => {
                 setWorkbook(event.target.files?.[0] || null);
+                setSavedForecast(null);
                 setError('');
                 setResult(null);
               }}
@@ -209,7 +242,7 @@ export default function ForecastApp() {
 
         {!result && !error && (
           <div className="empty-state">
-            Upload your forecast workbook and run the agent to see account and practice gaps.
+            Enter an SLS name and run analysis to view saved forecast data, or upload a new workbook.
           </div>
         )}
 

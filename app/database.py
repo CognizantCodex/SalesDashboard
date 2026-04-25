@@ -38,6 +38,27 @@ def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_f
         return len(rows)
 
 
+def load_revenue_forecast_metadata() -> dict[str, Any]:
+    if not DATABASE_PATH.exists():
+        return {"available": False, "table": "revenue_forecast", "rowsSaved": 0, "sourceFilename": None}
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        if not _table_exists(conn, "revenue_forecast"):
+            return {"available": False, "table": "revenue_forecast", "rowsSaved": 0, "sourceFilename": None}
+
+        rows_saved = conn.execute("SELECT COUNT(*) FROM revenue_forecast").fetchone()[0]
+        source_row = conn.execute(
+            "SELECT source_filename FROM revenue_forecast ORDER BY row_number LIMIT 1"
+        ).fetchone()
+
+    return {
+        "available": rows_saved > 0,
+        "table": "revenue_forecast",
+        "rowsSaved": rows_saved,
+        "sourceFilename": source_row[0] if source_row else None,
+    }
+
+
 def load_revenue_forecast() -> tuple[list[str], list[list[Any]], str | None]:
     if not DATABASE_PATH.exists():
         return [], [], None

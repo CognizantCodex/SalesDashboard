@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
-from .database import load_revenue_forecast, replace_revenue_forecast
+from .database import load_revenue_forecast, load_revenue_forecast_metadata, replace_revenue_forecast
 from .forecast_agent import analyze_forecast_rows, parse_workbook, result_to_csv
 
 
@@ -25,6 +25,12 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict[str, str | bool]:
     return {"ok": True, "agent": "sls-forecast-agent", "backend": "python"}
+
+
+@app.get("/api/forecast/current/metadata")
+async def current_forecast_metadata() -> dict:
+    metadata = await asyncio.to_thread(load_revenue_forecast_metadata)
+    return {"available": metadata["available"], "database": metadata}
 
 
 @app.get("/api/forecast/current")
