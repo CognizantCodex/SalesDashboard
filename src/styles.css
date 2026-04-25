@@ -49,6 +49,12 @@ header span {
   padding: 2rem 1.5rem;
 }
 
+.upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
 .upload-card {
   background: #fff;
   border-radius: 12px;
@@ -78,6 +84,18 @@ header span {
 
 .upload-card input {
   display: none;
+}
+
+.upload-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin-bottom: 14px;
+  color: #1f3864;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .upload-icon {
@@ -367,6 +385,10 @@ tr.total-row td:nth-child(n + 3) {
   .table-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .upload-grid {
+    grid-template-columns: 1fr;
   }
 
   .metrics {

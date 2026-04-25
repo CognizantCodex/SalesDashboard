@@ -7,12 +7,14 @@ const EXPORT_URL = 'http://127.0.0.1:3001/api/forecast/export.csv';
 
 export default function ForecastApp() {
   const [workbook, setWorkbook] = useState(null);
+  const [pipelineWorkbook, setPipelineWorkbook] = useState(null);
   const [slsName, setSlsName] = useState('Saxena, Gaurav');
   const [result, setResult] = useState(null);
   const [savedForecast, setSavedForecast] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isPipelineDragging, setIsPipelineDragging] = useState(false);
 
   useEffect(() => {
     let ignore = false;
@@ -175,6 +177,23 @@ export default function ForecastApp() {
     setResult(null);
   }
 
+  function handlePipelineDrop(event) {
+    event.preventDefault();
+    setIsPipelineDragging(false);
+
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+
+    const allowed = /\.(xlsb|xlsx|xlsm)$/i.test(file.name);
+    if (!allowed) {
+      setError('Please drop a .xlsb, .xlsx, or .xlsm workbook.');
+      return;
+    }
+
+    setPipelineWorkbook(file);
+    setError('');
+  }
+
   return (
     <>
       <header>
@@ -185,39 +204,73 @@ export default function ForecastApp() {
       </header>
 
       <main className="container">
-        <section
-          className={`upload-card${workbook ? ' done' : ''}${isDragging ? ' drag' : ''}`}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={handleDrop}
-        >
-          <label>
-            <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 16V8m0 0-3 3m3-3 3 3M20 16.5A3.5 3.5 0 0 0 16.5 13H15a5 5 0 1 0-9.9 1.5" />
-            </svg>
-            <p className="upload-title">{workbook ? workbook.name : savedForecast?.sourceFilename || 'Drop your workbook here'}</p>
-            <p className="upload-sub">
-              {workbook
-                ? 'Workbook selected - ready to analyse'
-                : savedForecast?.rowsSaved
-                  ? `${savedForecast.rowsSaved.toLocaleString()} rows loaded from saved revenue_forecast data`
-                  : 'Supports .xlsb and .xlsx - processed by the Python agent'}
-            </p>
-            <input
-              type="file"
-              accept=".xlsb,.xlsx,.xlsm"
-              onChange={(event) => {
-                setWorkbook(event.target.files?.[0] || null);
-                setSavedForecast(null);
-                setError('');
-                setResult(null);
-              }}
-            />
-          </label>
-        </section>
+        <div className="upload-grid">
+          <section
+            className={`upload-card${workbook ? ' done' : ''}${isDragging ? ' drag' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+          >
+            <label>
+              <span className="upload-kicker">Revenue</span>
+              <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V8m0 0-3 3m3-3 3 3M20 16.5A3.5 3.5 0 0 0 16.5 13H15a5 5 0 1 0-9.9 1.5" />
+              </svg>
+              <p className="upload-title">{workbook ? workbook.name : savedForecast?.sourceFilename || 'Drop your revenue workbook here'}</p>
+              <p className="upload-sub">
+                {workbook
+                  ? 'Revenue workbook selected - ready to analyse'
+                  : savedForecast?.rowsSaved
+                    ? `${savedForecast.rowsSaved.toLocaleString()} rows loaded from saved revenue_forecast data`
+                    : 'Supports .xlsb and .xlsx - processed by the Python agent'}
+              </p>
+              <input
+                type="file"
+                accept=".xlsb,.xlsx,.xlsm"
+                onChange={(event) => {
+                  setWorkbook(event.target.files?.[0] || null);
+                  setSavedForecast(null);
+                  setError('');
+                  setResult(null);
+                }}
+              />
+            </label>
+          </section>
+
+          <section
+            className={`upload-card${pipelineWorkbook ? ' done' : ''}${isPipelineDragging ? ' drag' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsPipelineDragging(true);
+            }}
+            onDragLeave={() => setIsPipelineDragging(false)}
+            onDrop={handlePipelineDrop}
+          >
+            <label>
+              <span className="upload-kicker">Pipeline</span>
+              <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" />
+              </svg>
+              <p className="upload-title">{pipelineWorkbook ? pipelineWorkbook.name : 'Drop your pipeline workbook here'}</p>
+              <p className="upload-sub">
+                {pipelineWorkbook
+                  ? 'Pipeline workbook selected'
+                  : 'Supports .xlsb and .xlsx'}
+              </p>
+              <input
+                type="file"
+                accept=".xlsb,.xlsx,.xlsm"
+                onChange={(event) => {
+                  setPipelineWorkbook(event.target.files?.[0] || null);
+                  setError('');
+                }}
+              />
+            </label>
+          </section>
+        </div>
 
         <section className="search-area">
           {result?.matchedSlsNames?.length > 0 && (
