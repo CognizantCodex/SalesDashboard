@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from .database import load_revenue_forecast, load_revenue_forecast_metadata, replace_revenue_forecast
-from .forecast_agent import analyze_forecast_rows, parse_workbook, result_to_csv
+from .forecast_agent import analyze_forecast_rows, analyze_pipeline_rows, parse_workbook, result_to_csv
 
 
 app = FastAPI(title="SLS Forecast Agent", version="1.0.0")
@@ -48,6 +48,23 @@ async def current_forecast(slsName: str = Query("Saxena, Gaurav")) -> dict:
             "rowsSaved": len(rows),
             "sourceFilename": source_filename,
         }
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/pipeline/summary")
+async def pipeline_summary(
+    workbook: UploadFile = File(...),
+    slsName: str = Form(...),
+    sheetName: str = Form("Data"),
+    currentYear: int | None = Form(None),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        headers, rows, col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
+        result = await asyncio.to_thread(analyze_pipeline_rows, rows, col_map, slsName, currentYear)
+        result["database"] = {"sheet": sheetName, "rowsScanned": len(rows), "sourceFilename": workbook.filename or ""}
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
