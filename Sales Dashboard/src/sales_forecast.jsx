@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import SalesRevenue from './sales_revenue.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
 import SalesSummary from './sales_summary.jsx';
+import SalesWonLost from './sales_won_lost.jsx';
 
 export default function SalesForecast() {
   const [slsName, setSlsName] = useState('');
@@ -9,6 +10,8 @@ export default function SalesForecast() {
   const [isRevenueLoading, setIsRevenueLoading] = useState(false);
   const [revenueSummary, setRevenueSummary] = useState(null);
   const [pipelineSummary, setPipelineSummary] = useState(null);
+  const [wonLostSummary, setWonLostSummary] = useState(null);
+  const [pipelineUploadVersion, setPipelineUploadVersion] = useState(0);
 
   return (
     <>
@@ -27,7 +30,12 @@ export default function SalesForecast() {
             onLoadingChange={setIsRevenueLoading}
             onSummaryChange={setRevenueSummary}
           />
-          <SalesPipeline slsName={slsName} onSummaryChange={setPipelineSummary} />
+          <SalesPipeline
+            slsName={slsName}
+            onSummaryChange={setPipelineSummary}
+            onUploadChange={() => setPipelineUploadVersion((version) => version + 1)}
+          />
+          <SalesWonLost slsName={slsName} uploadVersion={pipelineUploadVersion} onSummaryChange={setWonLostSummary} />
 
           <section className="search-area forecast-search">
             {!slsName.trim() && <p className="sls-warning">Enter an SLS name to summarize pipeline.</p>}
@@ -44,7 +52,7 @@ export default function SalesForecast() {
             </div>
           </section>
 
-          <SalesSummary revenueSummary={revenueSummary} pipelineSummary={pipelineSummary} />
+          <SalesSummary revenueSummary={revenueSummary} pipelineSummary={pipelineSummary} wonLostSummary={wonLostSummary} />
         </div>
       </main>
     </>

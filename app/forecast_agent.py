@@ -29,6 +29,7 @@ PIPELINE_REQUIRED_COLUMNS = [
 ]
 
 PIPELINE_STAGES = {"Qualified", "Un-Qualified"}
+WON_LOST_STAGES = {"Won", "Lost"}
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -287,6 +288,69 @@ def analyze_pipeline_rows(
                 "pipeline": _pipeline_money_label(totals["pipeline"]),
                 "qualified": _pipeline_money_label(totals["qualified"]),
                 "unqualified": _pipeline_money_label(totals["unqualified"]),
+            },
+        },
+    }
+
+
+def analyze_won_lost_rows(
+    data_rows: list[list[Any]],
+    col_map: dict[str, int],
+    sls_name: str,
+    current_year: int | None = None,
+) -> dict[str, Any]:
+    name = str(sls_name or "").strip()
+    if not name:
+        raise ValueError("SLS name is required.")
+
+    missing = [column for column in PIPELINE_REQUIRED_COLUMNS if column not in col_map]
+    amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
+    if amount_column is None:
+        missing.append("Net TCV Share")
+    if missing:
+        raise ValueError(f"Missing columns: {', '.join(missing)}")
+
+    c_sls = col_map["SLS"]
+    c_stage = col_map["Grouped Sales Stage"]
+    c_year = col_map["EDC Year"]
+    year = current_year or date.today().year
+
+    totals = {"won": 0.0, "lost": 0.0}
+    matched_sls_names: set[str] = set()
+    rows_saved = 0
+
+    for row in data_rows:
+        stage = str(_cell(row, c_stage) or "").strip()
+        normalized_stage = stage.lower()
+        if normalized_stage not in {"won", "lost"}:
+            continue
+
+        if _year_value(_cell(row, c_year)) != year:
+            continue
+
+        sls_text = str(_cell(row, c_sls) or "").strip()
+        if not _matches_name_permutation(sls_text, name):
+            continue
+
+        totals[normalized_stage] += _to_number(_cell(row, amount_column))
+        matched_sls_names.add(sls_text)
+        rows_saved += 1
+
+    total = totals["won"]
+
+    return {
+        "available": True,
+        "query": name,
+        "year": year,
+        "matchedSlsNames": sorted(matched_sls_names),
+        "metrics": {
+            **totals,
+            "total": total,
+            "rows": rows_saved,
+            "labels": {
+                "total": _pipeline_money_label(total),
+                "won": _pipeline_money_label(totals["won"]),
+                "lost": _pipeline_money_label(totals["lost"]),
             },
         },
     }

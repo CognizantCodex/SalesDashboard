@@ -5,7 +5,7 @@ const PIPELINE_CURRENT_URL = 'http://127.0.0.1:3001/api/pipeline/summary/current
 const PIPELINE_UPLOAD_URL = 'http://127.0.0.1:3001/api/pipeline/upload';
 const PIPELINE_METADATA_URL = 'http://127.0.0.1:3001/api/pipeline/upload/metadata';
 
-export default function SalesPipeline({ slsName, onSummaryChange }) {
+export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange }) {
   const [pipelineWorkbook, setPipelineWorkbook] = useState(null);
   const [savedPipeline, setSavedPipeline] = useState(null);
   const [pipelineSummary, setPipelineSummary] = useState(null);
@@ -146,6 +146,7 @@ export default function SalesPipeline({ slsName, onSummaryChange }) {
       const database = await uploadPipelineWorkbook(file);
       setSavedPipeline(database);
       setPipelineWorkbook(file);
+      onUploadChange?.();
     } catch (err) {
       setPipelineWorkbook(null);
       setPipelineSummary(null);

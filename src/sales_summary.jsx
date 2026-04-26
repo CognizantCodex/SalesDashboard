@@ -1,7 +1,7 @@
 import React from 'react';
 
-export default function SalesSummary({ revenueSummary, pipelineSummary }) {
-  if (!revenueSummary && !pipelineSummary) return null;
+export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary }) {
+  if (!revenueSummary && !pipelineSummary && !wonLostSummary) return null;
 
   return (
     <section className="summary-panel">
@@ -23,6 +23,15 @@ export default function SalesSummary({ revenueSummary, pipelineSummary }) {
             <Metric label="Qualified Pipeline" value={pipelineSummary.metrics.labels.qualified} />
             <Metric label="Un-Qualified Pipeline" value={pipelineSummary.metrics.labels.unqualified} />
             <Metric label="Accounts" value={pipelineSummary.metrics.accounts} />
+          </>
+        )}
+      </SummaryGroup>
+
+      <SummaryGroup title={wonLostSummary ? 'Realized TCV Summary CY ' + wonLostSummary.year : 'Realized TCV Summary'} hidden={!wonLostSummary}>
+        {wonLostSummary && (
+          <>
+            <Metric label="Total TCV" value={wonLostSummary.metrics.labels.total} />
+            <Metric label="Won TCV" value={wonLostSummary.metrics.labels.won} />
           </>
         )}
       </SummaryGroup>
