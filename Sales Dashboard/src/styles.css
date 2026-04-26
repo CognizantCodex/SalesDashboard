@@ -63,8 +63,18 @@ header span {
   order: 2;
 }
 
-.revenue-flow {
+.forecast-search {
   order: 3;
+  grid-column: 1 / -1;
+}
+
+.summary-panel {
+  order: 4;
+  grid-column: 1 / -1;
+}
+
+.revenue-flow {
+  order: 5;
   grid-column: 1 / -1;
 }
 
@@ -95,9 +105,10 @@ header span {
   cursor: pointer;
 }
 
-.upload-card input {
+.upload-card input[type="file"] {
   display: none;
 }
+
 
 .upload-kicker {
   display: inline-flex;
@@ -139,6 +150,14 @@ header span {
 .search-area {
   margin-top: 1.5rem;
 }
+
+.sls-warning {
+  margin: 0 0 0.6rem;
+  color: #b8860b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 
 .search-row {
   display: flex;
@@ -204,6 +223,31 @@ header span {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
+  margin-top: 1.5rem;
+}
+
+
+.summary-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.summary-group h2 {
+  color: #1f3864;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.revenue-chips {
   margin-top: 1.5rem;
 }
 
@@ -410,7 +454,9 @@ tr.total-row td:nth-child(n + 3) {
     grid-template-columns: 1fr;
   }
 
-  .metrics {
+  .metrics,
+  .summary-panel,
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 

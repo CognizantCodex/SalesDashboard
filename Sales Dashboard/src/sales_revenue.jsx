@@ -16,14 +16,23 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export default function SalesRevenue() {
+export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, onSummaryChange }) {
   const [workbook, setWorkbook] = useState(null);
-  const [slsName, setSlsName] = useState('Saxena, Gaurav');
   const [result, setResult] = useState(null);
   const [savedForecast, setSavedForecast] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    onLoadingChange(loading);
+  }, [loading, onLoadingChange]);
+
+  useEffect(() => {
+    if (runRequestId > 0) {
+      runAgent();
+    }
+  }, [runRequestId]);
 
   useEffect(() => {
     let ignore = false;
@@ -64,6 +73,7 @@ export default function SalesRevenue() {
     const trimmedName = name.trim();
     if (!trimmedName) {
       setResult(null);
+      onSummaryChange(null);
       setError('Enter an SLS name before running analysis.');
       return;
     }
@@ -80,8 +90,10 @@ export default function SalesRevenue() {
       if (payload.available) {
         setSavedForecast(payload.database);
         setResult(payload);
+        onSummaryChange(payload.metrics);
       } else if (!options.silent) {
         setResult(null);
+        onSummaryChange(null);
         setError('No saved forecast data is available. Upload a workbook first.');
       }
     } catch (err) {
@@ -100,6 +112,7 @@ export default function SalesRevenue() {
     setLoading(true);
     setError('');
     setResult(null);
+    onSummaryChange(null);
 
     const formData = new FormData();
     formData.append('workbook', workbook);
@@ -115,6 +128,7 @@ export default function SalesRevenue() {
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Forecast agent failed.');
       setSavedForecast(payload.database);
       setResult(payload);
+      onSummaryChange(payload.metrics);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -383,6 +397,7 @@ export default function SalesRevenue() {
     setSavedForecast(null);
     setError('');
     setResult(null);
+    onSummaryChange(null);
   }
 
   return (
@@ -423,24 +438,11 @@ export default function SalesRevenue() {
       </section>
 
       <section className="revenue-flow">
-        <section className="search-area">
-          {result?.matchedSlsNames?.length > 0 && (
-            <div className="chips">
-              {result.matchedSlsNames.map((name) => <span className="chip" key={name}>{name}</span>)}
-            </div>
-          )}
-          <div className="search-row">
-            <input
-              type="text"
-              placeholder="Enter SLS name  e.g. Saxena, Gaurav"
-              value={slsName}
-              onChange={(event) => setSlsName(event.target.value)}
-            />
-            <button className="primary" onClick={runAgent} disabled={loading}>
-              {loading ? 'Running...' : 'Run Analysis'}
-            </button>
+        {result?.matchedSlsNames?.length > 0 && (
+          <div className="chips revenue-chips">
+            {result.matchedSlsNames.map((name) => <span className="chip" key={name}>{name}</span>)}
           </div>
-        </section>
+        )}
 
         {error && <p className="error">{error}</p>}
 
@@ -451,15 +453,7 @@ export default function SalesRevenue() {
         )}
 
         {result && (
-          <>
-            <section className="metrics">
-              <Metric label="Forecast" value={result.metrics.labels.forecast} />
-              <Metric label="Target" value={result.metrics.labels.target} />
-              <Metric label="Gap" value={result.metrics.labels.gap} tone={result.metrics.status} />
-              <Metric label="Accounts" value={result.metrics.accounts} />
-            </section>
-
-            <section className="table-wrap">
+          <section className="table-wrap">
               <div className="table-header">
                 <h2>{result.query} - Account & Practice Breakdown</h2>
                 <button className="export-btn" onClick={exportExcel}>Export Excel</button>
@@ -493,20 +487,10 @@ export default function SalesRevenue() {
                   ))}
                 </tbody>
               </table>
-            </section>
-          </>
+          </section>
         )}
       </section>
     </>
-  );
-}
-
-function Metric({ label, value, tone = '' }) {
-  return (
-    <article className="metric">
-      <div className="metric-label">{label}</div>
-      <div className={'metric-val ' + statusClass(tone)}>{value}</div>
-    </article>
   );
 }
 

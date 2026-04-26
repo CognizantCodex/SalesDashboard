@@ -1,8 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import SalesRevenue from './sales_revenue.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
+import SalesSummary from './sales_summary.jsx';
 
 export default function SalesForecast() {
+  const [slsName, setSlsName] = useState('');
+  const [runRequestId, setRunRequestId] = useState(0);
+  const [isRevenueLoading, setIsRevenueLoading] = useState(false);
+  const [revenueSummary, setRevenueSummary] = useState(null);
+  const [pipelineSummary, setPipelineSummary] = useState(null);
+
   return (
     <>
       <header>
@@ -14,8 +21,30 @@ export default function SalesForecast() {
 
       <main className="container">
         <div className="upload-grid">
-          <SalesRevenue />
-          <SalesPipeline />
+          <SalesRevenue
+            slsName={slsName}
+            runRequestId={runRequestId}
+            onLoadingChange={setIsRevenueLoading}
+            onSummaryChange={setRevenueSummary}
+          />
+          <SalesPipeline slsName={slsName} onSummaryChange={setPipelineSummary} />
+
+          <section className="search-area forecast-search">
+            {!slsName.trim() && <p className="sls-warning">Enter an SLS name to summarize pipeline.</p>}
+            <div className="search-row">
+              <input
+                type="text"
+                placeholder="Enter SLS name"
+                value={slsName}
+                onChange={(event) => setSlsName(event.target.value)}
+              />
+              <button className="primary" onClick={() => setRunRequestId((requestId) => requestId + 1)} disabled={isRevenueLoading}>
+                {isRevenueLoading ? 'Running...' : 'Run Analysis'}
+              </button>
+            </div>
+          </section>
+
+          <SalesSummary revenueSummary={revenueSummary} pipelineSummary={pipelineSummary} />
         </div>
       </main>
     </>
