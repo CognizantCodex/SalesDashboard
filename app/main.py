@@ -7,7 +7,14 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
-from .database import load_revenue_forecast, load_revenue_forecast_metadata, replace_revenue_forecast
+from .database import (
+    load_pipeline_upload,
+    load_pipeline_upload_metadata,
+    load_revenue_forecast,
+    load_revenue_forecast_metadata,
+    replace_pipeline_upload,
+    replace_revenue_forecast,
+)
 from .forecast_agent import analyze_forecast_rows, analyze_pipeline_rows, parse_workbook, result_to_csv
 
 
@@ -52,6 +59,55 @@ async def current_forecast(slsName: str = Query("Saxena, Gaurav")) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+
+
+@app.get("/api/pipeline/upload/metadata")
+async def pipeline_upload_metadata() -> dict:
+    metadata = await asyncio.to_thread(load_pipeline_upload_metadata)
+    return {"available": metadata["available"], "database": metadata}
+
+
+@app.get("/api/pipeline/summary/current")
+async def current_pipeline_summary(
+    slsName: str = Query(...),
+    currentYear: int | None = Query(None),
+) -> dict:
+    try:
+        headers, rows, source_filename = await asyncio.to_thread(load_pipeline_upload)
+        if not rows:
+            return {"available": False, "database": {"table": "pipeline_upload", "rowsSaved": 0}}
+
+        col_map = {header: index for index, header in enumerate(headers) if header}
+        result = await asyncio.to_thread(analyze_pipeline_rows, rows, col_map, slsName, currentYear)
+        result["database"] = {
+            "table": "pipeline_upload",
+            "rowsSaved": len(rows),
+            "sourceFilename": source_filename,
+        }
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/pipeline/upload")
+async def upload_pipeline(
+    workbook: UploadFile = File(...),
+    sheetName: str = Form("Data"),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
+        rows_saved = await asyncio.to_thread(replace_pipeline_upload, headers, rows, workbook.filename or "")
+        return {
+            "available": rows_saved > 0,
+            "database": {
+                "table": "pipeline_upload",
+                "rowsSaved": rows_saved,
+                "sourceFilename": workbook.filename or "",
+            },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @app.post("/api/pipeline/summary")
 async def pipeline_summary(

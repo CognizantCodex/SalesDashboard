@@ -151,6 +151,14 @@ header span {
   margin-top: 1.5rem;
 }
 
+.sls-warning {
+  margin: 0 0 0.6rem;
+  color: #b8860b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+
 .search-row {
   display: flex;
   gap: 10px;

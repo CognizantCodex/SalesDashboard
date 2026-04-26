@@ -30,6 +30,7 @@ export default function SalesForecast() {
           <SalesPipeline slsName={slsName} onSummaryChange={setPipelineSummary} />
 
           <section className="search-area forecast-search">
+            {!slsName.trim() && <p className="sls-warning">Enter an SLS name to summarize pipeline.</p>}
             <div className="search-row">
               <input
                 type="text"
