@@ -49,6 +49,25 @@ header span {
   padding: 2rem 1.5rem;
 }
 
+.upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.revenue-upload {
+  order: 1;
+}
+
+.pipeline-upload {
+  order: 2;
+}
+
+.revenue-flow {
+  order: 3;
+  grid-column: 1 / -1;
+}
+
 .upload-card {
   background: #fff;
   border-radius: 12px;
@@ -80,6 +99,18 @@ header span {
   display: none;
 }
 
+.upload-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin-bottom: 14px;
+  color: #1f3864;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .upload-icon {
   width: 44px;
   height: 44px;
@@ -97,6 +128,12 @@ header span {
 .upload-sub {
   font-size: 14px;
   color: #7a8fa8;
+}
+
+.upload-error {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #c00000;
 }
 
 .search-area {
@@ -367,6 +404,10 @@ tr.total-row td:nth-child(n + 3) {
   .table-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .upload-grid {
+    grid-template-columns: 1fr;
   }
 
   .metrics {
