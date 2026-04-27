@@ -10,6 +10,7 @@ import SalesPendingValidation from './sales_pending_validation.jsx';
 
 const SLSM_OPTIONS_URL = 'http://127.0.0.1:3001/api/slsm/forecast/options';
 const SLSM_OPTIONS_CURRENT_URL = 'http://127.0.0.1:3001/api/slsm/forecast/options/current';
+const SLS_BREAKDOWN_URL = 'http://127.0.0.1:3001/api/slsm/sls-breakdown/current';
 const SLSM_FORECAST_SHEET = 'SL_Forecast -2026';
 
 function roundedMillions(value) {
@@ -32,6 +33,9 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
   const [slsmOptions, setSlsmOptions] = useState([]);
   const [optionsError, setOptionsError] = useState('');
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
+  const [slsBreakdownRows, setSlsBreakdownRows] = useState([]);
+  const [slsBreakdownError, setSlsBreakdownError] = useState('');
+  const [isLoadingSlsBreakdown, setIsLoadingSlsBreakdown] = useState(false);
   const showSlsmSelector = Boolean(forecastWorkbook) || slsmOptions.length > 0 || isLoadingOptions;
   const trimmedSlsmName = slsmName.trim();
   const totalTcvMillions =
@@ -43,6 +47,21 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
     (pipelineSummary?.metrics?.pipeline || 0) !== 0 ||
     totalTcvMillions !== 0;
   const showNoDataWarning = trimmedSlsmName && hasSummaryResult && !hasVisibleSummary;
+  const slsBreakdownTotals = slsBreakdownRows.reduce(
+    (accumulator, row) => {
+      accumulator.revenue += row.revenue.forecast || 0;
+      accumulator.target += row.revenue.target || 0;
+      accumulator.gap += row.revenue.gap || 0;
+      accumulator.pipeline += row.pipeline.pipeline || 0;
+      accumulator.qualified += row.pipeline.qualified || 0;
+      accumulator.unqualified += row.pipeline.unqualified || 0;
+      accumulator.realizedTcv += row.realizedTcv.total || 0;
+      accumulator.wonTcv += row.realizedTcv.won || 0;
+      accumulator.pendingValidationTcv += row.realizedTcv.pendingValidation || 0;
+      return accumulator;
+    },
+    { revenue: 0, target: 0, gap: 0, pipeline: 0, qualified: 0, unqualified: 0, realizedTcv: 0, wonTcv: 0, pendingValidationTcv: 0 }
+  );
 
   useEffect(() => {
     if (forecastWorkbook) {
@@ -52,6 +71,44 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
 
     loadSavedSlsmOptions();
   }, [forecastWorkbook]);
+
+  useEffect(() => {
+    if (!trimmedSlsmName) {
+      setSlsBreakdownRows([]);
+      setSlsBreakdownError('');
+      setIsLoadingSlsBreakdown(false);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      setIsLoadingSlsBreakdown(true);
+      setSlsBreakdownError('');
+
+      try {
+        const params = new URLSearchParams({
+          slsmName: trimmedSlsmName,
+          currentYear: String(new Date().getFullYear())
+        });
+        const response = await fetch(SLS_BREAKDOWN_URL + '?' + params.toString(), { signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load SLS breakdown.');
+
+        setSlsBreakdownRows(payload.rows || []);
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        setSlsBreakdownRows([]);
+        setSlsBreakdownError(err.message);
+      } finally {
+        setIsLoadingSlsBreakdown(false);
+      }
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [trimmedSlsmName, pipelineUploadVersion, revenueSummary]);
 
   async function loadSavedSlsmOptions() {
     setSlsmName('');
@@ -210,8 +267,89 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
             onPipelineDetailsClick={() => setCurrentPage('pipeline-details')}
             onTcvDetailsClick={() => setCurrentPage('tcv-details')}
           />
+
+          {trimmedSlsmName && (
+            <section className="table-wrap detail-table-wrap slsl-summary-table slsm-breakdown-table">
+              <div className="table-header">
+                <h2>SLS Breakdown</h2>
+              </div>
+
+              {slsBreakdownError && <p className="error">{slsBreakdownError}</p>}
+              {isLoadingSlsBreakdown ? (
+                <p className="empty-state">Loading SLS breakdown...</p>
+              ) : slsBreakdownRows.length === 0 ? (
+                <p className="empty-state">No SLS breakdown data is available.</p>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>SLS</th>
+                      <th>Revenue</th>
+                      <th>Target</th>
+                      <th>Gap</th>
+                      <th>Pipeline</th>
+                      <th>Qualified</th>
+                      <th>Un-Qualified</th>
+                      <th>TCV</th>
+                      <th>Won</th>
+                      <th>Pending Validation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slsBreakdownRows.map((row) => (
+                      <tr className="detail-row" key={row.slsName}>
+                        <td>{row.slsName}</td>
+                        <td>{row.revenue.labels.forecast}</td>
+                        <td>{row.revenue.labels.target}</td>
+                        <td className={statusClass(row.revenue.status)}>{row.revenue.labels.gap}</td>
+                        <td>{row.pipeline.labels.pipeline}</td>
+                        <td>{row.pipeline.labels.qualified}</td>
+                        <td>{row.pipeline.labels.unqualified}</td>
+                        <td>{row.realizedTcv.labels.total}</td>
+                        <td>{row.realizedTcv.labels.won}</td>
+                        <td>{row.realizedTcv.labels.pendingValidation}</td>
+                      </tr>
+                    ))}
+                    <tr className="total-row slsl-total-row">
+                      <td>Total</td>
+                      <td>{formatRevenueLabel(slsBreakdownTotals.revenue)}</td>
+                      <td>{formatRevenueLabel(slsBreakdownTotals.target)}</td>
+                      <td className={statusClass(gapStatus(slsBreakdownTotals.gap))}>{formatRevenueLabel(slsBreakdownTotals.gap)}</td>
+                      <td>{formatDollarLabel(slsBreakdownTotals.pipeline)}</td>
+                      <td>{formatDollarLabel(slsBreakdownTotals.qualified)}</td>
+                      <td>{formatDollarLabel(slsBreakdownTotals.unqualified)}</td>
+                      <td>{formatDollarLabel(slsBreakdownTotals.realizedTcv)}</td>
+                      <td>{formatDollarLabel(slsBreakdownTotals.wonTcv)}</td>
+                      <td>{formatDollarLabel(slsBreakdownTotals.pendingValidationTcv)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
         </div>
       </main>
     </>
   );
+}
+
+function statusClass(status) {
+  if (status === 'behind') return 'red';
+  if (status === 'ahead') return 'green';
+  return 'muted';
+}
+
+function formatRevenueLabel(value) {
+  return '$' + (value / 1000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
+}
+
+function formatDollarLabel(value) {
+  return '$' + (value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
+}
+
+function gapStatus(value) {
+  const gapInMillions = value / 1000;
+  if (gapInMillions > 0.05) return 'behind';
+  if (gapInMillions < -0.05) return 'ahead';
+  return 'on-track';
 }
