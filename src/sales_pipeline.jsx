@@ -5,7 +5,7 @@ const PIPELINE_CURRENT_URL = 'http://127.0.0.1:3001/api/pipeline/summary/current
 const PIPELINE_UPLOAD_URL = 'http://127.0.0.1:3001/api/pipeline/upload';
 const PIPELINE_METADATA_URL = 'http://127.0.0.1:3001/api/pipeline/upload/metadata';
 
-export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange }) {
+export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange, onResultChange }) {
   const [pipelineWorkbook, setPipelineWorkbook] = useState(null);
   const [savedPipeline, setSavedPipeline] = useState(null);
   const [pipelineSummary, setPipelineSummary] = useState(null);
@@ -41,12 +41,14 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
     if (!pipelineWorkbook && !savedPipeline?.rowsSaved) {
       setPipelineSummary(null);
       onSummaryChange(null);
+      onResultChange(null);
       return undefined;
     }
 
     if (!trimmedName) {
       setPipelineSummary(null);
       onSummaryChange(null);
+      onResultChange(null);
       return undefined;
     }
 
@@ -62,10 +64,12 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
 
         setPipelineSummary(payload);
         onSummaryChange(payload);
+        onResultChange(payload);
       } catch (err) {
         if (err.name === 'AbortError') return;
         setPipelineSummary(null);
         onSummaryChange(null);
+        onResultChange(null);
         setPipelineError(err.message);
       } finally {
         setIsLoadingPipeline(false);
@@ -126,6 +130,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
       setPipelineWorkbook(null);
       setPipelineSummary(null);
       onSummaryChange(null);
+      onResultChange(null);
       setPipelineError('');
       return;
     }
@@ -135,6 +140,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
       setPipelineWorkbook(null);
       setPipelineSummary(null);
       onSummaryChange(null);
+      onResultChange(null);
       setPipelineError('Please select a .xlsb, .xlsx, or .xlsm workbook.');
       return;
     }
@@ -151,6 +157,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
       setPipelineWorkbook(null);
       setPipelineSummary(null);
       onSummaryChange(null);
+      onResultChange(null);
       setPipelineError(err.message);
     } finally {
       setIsLoadingPipeline(false);

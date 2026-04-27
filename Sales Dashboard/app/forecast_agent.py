@@ -226,10 +226,16 @@ def analyze_pipeline_rows(
         "CY REVENUE $",
     )
     account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
+    practice_column = _get_column(col_map, "Practice Area", "Practice")
+    deal_type_column = _get_column(col_map, "Grouped Deal Type", "Deal Type")
     if amount_column is None:
         missing.append("Net TCV Share or CY $")
     if account_column is None:
         missing.append("Financial Ultimate Parent Account or Account Name")
+    if practice_column is None:
+        missing.append("Practice Area or Practice")
+    if deal_type_column is None:
+        missing.append("Grouped Deal Type or Deal Type")
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
@@ -245,6 +251,7 @@ def analyze_pipeline_rows(
     }
     accounts: set[str] = set()
     matched_sls_names: set[str] = set()
+    account_practices: dict[str, dict[str, Any]] = {}
     rows_saved = 0
 
     for row in data_rows:
@@ -261,16 +268,81 @@ def analyze_pipeline_rows(
 
         amount = _to_number(_cell(row, amount_column))
         account = str(_cell(row, account_column) or "").strip()
+        practice = str(_cell(row, practice_column) or "").strip()
+        deal_type = str(_cell(row, deal_type_column) or "").strip() or "Unspecified"
         if account:
             accounts.add(account)
         matched_sls_names.add(sls_text)
         rows_saved += 1
 
+        key = f"{account}__{practice}__{deal_type}"
+        detail = account_practices.setdefault(
+            key,
+            {
+                "account": account,
+                "practice": practice,
+                "dealType": deal_type,
+                "pipeline": 0.0,
+                "qualified": 0.0,
+                "unqualified": 0.0,
+                "rows": 0,
+            },
+        )
+        detail["pipeline"] += amount
+        detail["rows"] += 1
+
         totals["pipeline"] += amount
         if stage == "Qualified":
             totals["qualified"] += amount
+            detail["qualified"] += amount
         elif stage == "Un-Qualified":
             totals["unqualified"] += amount
+            detail["unqualified"] += amount
+
+    detail_rows = []
+    for detail in sorted(account_practices.values(), key=lambda item: (item["account"], item["practice"])):
+        detail_rows.append(
+            {
+                **detail,
+                "labels": {
+                    "pipeline": _pipeline_money_label(detail["pipeline"]),
+                    "qualified": _pipeline_money_label(detail["qualified"]),
+                    "unqualified": _pipeline_money_label(detail["unqualified"]),
+                },
+            }
+        )
+
+    account_map: dict[str, dict[str, Any]] = {}
+    for detail in detail_rows:
+        account_name = detail["account"]
+        account = account_map.setdefault(
+            account_name,
+            {
+                "account": account_name,
+                "pipeline": 0.0,
+                "qualified": 0.0,
+                "unqualified": 0.0,
+                "rows": 0,
+                "practices": [],
+            },
+        )
+        account["pipeline"] += detail["pipeline"]
+        account["qualified"] += detail["qualified"]
+        account["unqualified"] += detail["unqualified"]
+        account["rows"] += detail["rows"]
+        account["practices"].append(detail)
+
+    account_rows = [
+        {
+            **account,
+            "labels": {
+                "pipeline": _pipeline_money_label(account["pipeline"]),
+                "qualified": _pipeline_money_label(account["qualified"]),
+                "unqualified": _pipeline_money_label(account["unqualified"]),
+            },
+        }
+        for account in account_map.values()
+    ]
 
     return {
         "available": True,
@@ -287,6 +359,8 @@ def analyze_pipeline_rows(
                 "unqualified": _pipeline_money_label(totals["unqualified"]),
             },
         },
+        "accounts": account_rows,
+        "rows": detail_rows,
     }
 
 

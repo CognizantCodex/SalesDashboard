@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, onRevenueDetailsClick }) {
+export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, onRevenueDetailsClick, onPipelineDetailsClick }) {
   if (!revenueSummary && !pipelineSummary && !wonLostSummary && !pendingValidationSummary) return null;
 
   const realizedYear = wonLostSummary?.year || pendingValidationSummary?.year;
@@ -29,7 +29,7 @@ export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostS
         )}
       </SummaryGroup>
 
-      <SummaryGroup title={pipelineSummary ? 'Pipeline Summary CY ' + pipelineSummary.year : 'Pipeline Summary'} hidden={!showPipeline}>
+      <SummaryGroup title={pipelineSummary ? 'Pipeline Summary CY ' + pipelineSummary.year : 'Pipeline Summary'} hidden={!showPipeline} action={onPipelineDetailsClick ? <button className="summary-link" onClick={onPipelineDetailsClick}>Pipeline Details</button> : null}>
         {pipelineSummary && (
           <>
             <Metric label="Total Pipeline" value={pipelineSummary.metrics.labels.pipeline} />
