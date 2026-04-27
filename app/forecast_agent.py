@@ -376,8 +376,15 @@ def analyze_won_lost_rows(
 
     missing = [column for column in PIPELINE_REQUIRED_COLUMNS if column not in col_map]
     amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
+    account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
+    practice_column = _get_column(col_map, "Practice Area", "Practice")
+    deal_type_column = _get_column(col_map, "Grouped Deal Type", "Deal Type")
     if amount_column is None:
         missing.append("Net TCV Share")
+    if account_column is None:
+        missing.append("Financial Ultimate Parent Account or Account Name")
+    if practice_column is None:
+        missing.append("Practice Area or Practice")
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
@@ -388,6 +395,7 @@ def analyze_won_lost_rows(
 
     totals = {"won": 0.0, "lost": 0.0}
     matched_sls_names: set[str] = set()
+    account_practices: dict[str, dict[str, Any]] = {}
     rows_saved = 0
 
     for row in data_rows:
@@ -403,11 +411,33 @@ def analyze_won_lost_rows(
         if not _matches_name_permutation(sls_text, name):
             continue
 
-        totals[normalized_stage] += _to_number(_cell(row, amount_column))
+        amount = _to_number(_cell(row, amount_column))
+        account = str(_cell(row, account_column) or "").strip()
+        practice = str(_cell(row, practice_column) or "").strip()
+        deal_type = str(_cell(row, deal_type_column) or "").strip() if deal_type_column is not None else ""
+        deal_type = deal_type or "Unspecified"
+        detail = account_practices.setdefault(
+            f"{account}__{practice}__{deal_type}",
+            {
+                "account": account,
+                "practice": practice,
+                "dealType": deal_type,
+                "won": 0.0,
+                "lost": 0.0,
+                "total": 0.0,
+                "rows": 0,
+            },
+        )
+
+        totals[normalized_stage] += amount
+        detail[normalized_stage] += amount
+        detail["total"] = detail["won"]
+        detail["rows"] += 1
         matched_sls_names.add(sls_text)
         rows_saved += 1
 
     total = totals["won"]
+    detail_rows = _build_tcv_account_rows(account_practices, "won", "total")
 
     return {
         "available": True,
@@ -424,6 +454,8 @@ def analyze_won_lost_rows(
                 "lost": _pipeline_money_label(totals["lost"]),
             },
         },
+        "accounts": detail_rows["accounts"],
+        "rows": detail_rows["rows"],
     }
 
 
@@ -440,8 +472,15 @@ def analyze_pending_validation_rows(
     required_columns = ["SLS", "Sub-Status", "EDC Year"]
     missing = [column for column in required_columns if column not in col_map]
     amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
+    account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
+    practice_column = _get_column(col_map, "Practice Area", "Practice")
+    deal_type_column = _get_column(col_map, "Grouped Deal Type", "Deal Type")
     if amount_column is None:
         missing.append("Net TCV Share")
+    if account_column is None:
+        missing.append("Financial Ultimate Parent Account or Account Name")
+    if practice_column is None:
+        missing.append("Practice Area or Practice")
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
@@ -452,6 +491,7 @@ def analyze_pending_validation_rows(
 
     total = 0.0
     matched_sls_names: set[str] = set()
+    account_practices: dict[str, dict[str, Any]] = {}
     rows_saved = 0
 
     for row in data_rows:
@@ -466,9 +506,28 @@ def analyze_pending_validation_rows(
         if not _matches_name_permutation(sls_text, name):
             continue
 
-        total += _to_number(_cell(row, amount_column))
+        amount = _to_number(_cell(row, amount_column))
+        account = str(_cell(row, account_column) or "").strip()
+        practice = str(_cell(row, practice_column) or "").strip()
+        deal_type = str(_cell(row, deal_type_column) or "").strip() if deal_type_column is not None else ""
+        deal_type = deal_type or "Unspecified"
+        detail = account_practices.setdefault(
+            f"{account}__{practice}__{deal_type}",
+            {
+                "account": account,
+                "practice": practice,
+                "dealType": deal_type,
+                "pendingValidation": 0.0,
+                "rows": 0,
+            },
+        )
+        total += amount
+        detail["pendingValidation"] += amount
+        detail["rows"] += 1
         matched_sls_names.add(sls_text)
         rows_saved += 1
+
+    detail_rows = _build_tcv_account_rows(account_practices, "pendingValidation")
 
     return {
         "available": True,
@@ -482,7 +541,41 @@ def analyze_pending_validation_rows(
                 "pendingValidation": _pipeline_money_label(total),
             },
         },
+        "accounts": detail_rows["accounts"],
+        "rows": detail_rows["rows"],
     }
+
+
+
+def _build_tcv_account_rows(account_practices: dict[str, dict[str, Any]], *amount_keys: str) -> dict[str, list[dict[str, Any]]]:
+    detail_rows = []
+    for detail in sorted(account_practices.values(), key=lambda item: (item["account"], item["practice"])):
+        labels = {key: _pipeline_money_label(detail.get(key, 0.0)) for key in amount_keys}
+        detail_rows.append({**detail, "labels": labels})
+
+    account_map: dict[str, dict[str, Any]] = {}
+    for detail in detail_rows:
+        account_name = detail["account"]
+        account = account_map.setdefault(
+            account_name,
+            {
+                "account": account_name,
+                "rows": 0,
+                "practices": [],
+                **{key: 0.0 for key in amount_keys},
+            },
+        )
+        account["rows"] += detail.get("rows", 0)
+        for key in amount_keys:
+            account[key] += detail.get(key, 0.0)
+        account["practices"].append(detail)
+
+    account_rows = []
+    for account in account_map.values():
+        labels = {key: _pipeline_money_label(account.get(key, 0.0)) for key in amount_keys}
+        account_rows.append({**account, "labels": labels})
+
+    return {"accounts": account_rows, "rows": detail_rows}
 
 
 def _matches_name_permutation(value: Any, query: str) -> bool:

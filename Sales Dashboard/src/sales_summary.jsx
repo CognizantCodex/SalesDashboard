@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, onRevenueDetailsClick, onPipelineDetailsClick }) {
+export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, onRevenueDetailsClick, onPipelineDetailsClick, onTcvDetailsClick }) {
   if (!revenueSummary && !pipelineSummary && !wonLostSummary && !pendingValidationSummary) return null;
 
   const realizedYear = wonLostSummary?.year || pendingValidationSummary?.year;
@@ -12,9 +12,7 @@ export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostS
   const showRealizedTcv = totalTcvMillions !== 0;
   const hasVisibleSummary = showRevenue || showPipeline || showRealizedTcv;
 
-  if (!hasVisibleSummary) {
-    return <p className="sls-warning summary-warning">Data does not exist for the specified SLS</p>;
-  }
+  if (!hasVisibleSummary) return null;
 
   return (
     <section className="summary-panel">
@@ -40,7 +38,7 @@ export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostS
         )}
       </SummaryGroup>
 
-      <SummaryGroup title={realizedYear ? 'Realized TCV Summary CY ' + realizedYear : 'Realized TCV Summary'} hidden={!showRealizedTcv}>
+      <SummaryGroup title={realizedYear ? 'Realized TCV Summary CY ' + realizedYear : 'Realized TCV Summary'} hidden={!showRealizedTcv} action={onTcvDetailsClick ? <button className="summary-link" onClick={onTcvDetailsClick}>TCV Details</button> : null}>
         <Metric label="Total TCV" value={formatMillionLabel(totalTcvMillions)} />
         <Metric label="Won TCV" value={wonLostSummary?.metrics?.labels?.won || '$0.0M'} />
         <Metric label="Pending Validation TCV" value={pendingValidationSummary?.metrics?.labels?.pendingValidation || '$0.0M'} />
