@@ -1,8 +1,18 @@
 import { useEffect } from 'react';
 
-const WON_LOST_CURRENT_URL = 'http://127.0.0.1:3001/api/won-lost/summary/current';
+const ENTITY_CONFIG = {
+  sls: {
+    formField: 'slsName',
+    currentUrl: 'http://127.0.0.1:3001/api/won-lost/summary/current'
+  },
+  slsm: {
+    formField: 'slsmName',
+    currentUrl: 'http://127.0.0.1:3001/api/slsm/won-lost/summary/current'
+  }
+};
 
-export default function SalesWonLost({ slsName, uploadVersion, onSummaryChange }) {
+export default function SalesWonLost({ slsName, uploadVersion, onSummaryChange, entity = 'sls' }) {
+  const config = ENTITY_CONFIG[entity] || ENTITY_CONFIG.sls;
   useEffect(() => {
     const trimmedName = slsName.trim();
     if (!trimmedName) {
@@ -15,10 +25,10 @@ export default function SalesWonLost({ slsName, uploadVersion, onSummaryChange }
     async function loadWonLostSummary() {
       try {
         const params = new URLSearchParams({
-          slsName: trimmedName,
+          [config.formField]: trimmedName,
           currentYear: String(new Date().getFullYear())
         });
-        const response = await fetch(WON_LOST_CURRENT_URL + '?' + params.toString(), {
+        const response = await fetch(config.currentUrl + '?' + params.toString(), {
           signal: controller.signal
         });
         const payload = await response.json();

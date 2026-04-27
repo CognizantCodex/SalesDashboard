@@ -18,19 +18,19 @@ REQUIRED_COLUMNS = [
     "Parent Account Name",
     "FY 26 (SL)",
     "Target 2026",
-    "SLS",
 ]
 
 
 PIPELINE_REQUIRED_COLUMNS = [
-    "SLS",
     "Grouped Sales Stage",
     "EDC Year",
 ]
 
 PIPELINE_STAGES = {"Qualified", "Un-Qualified"}
+PIPELINE_EXCLUDED_SUB_STATUSES = {"negotiation"}
 WON_LOST_STAGES = {"Won", "Lost"}
 PENDING_VALIDATION_STATUS = "Pending Validation"
+SLSM_FORECAST_SHEET = "SL_Forecast -2026"
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -38,6 +38,40 @@ def _get_column(col_map: dict[str, int], *names: str) -> int | None:
         if name in col_map:
             return col_map[name]
     return None
+
+
+def _person_column_candidates(person_column: str) -> tuple[str, ...]:
+    if person_column == "SLSM":
+        return ("SLSM", "SLSM Name", "SLS Manager")
+    return (person_column,)
+
+
+def _get_person_column(col_map: dict[str, int], person_column: str) -> int | None:
+    return _get_column(col_map, *_person_column_candidates(person_column))
+
+
+def _person_missing_label(person_column: str) -> str:
+    candidates = _person_column_candidates(person_column)
+    if len(candidates) == 1:
+        return candidates[0]
+    return " or ".join(candidates)
+
+
+def unique_person_values(
+    data_rows: list[list[Any]],
+    col_map: dict[str, int],
+    person_column: str,
+) -> list[str]:
+    person_column_index = _get_person_column(col_map, person_column)
+    if person_column_index is None:
+        raise ValueError(f"Missing columns: {_person_missing_label(person_column)}")
+
+    values = {
+        str(_cell(row, person_column_index) or "").strip()
+        for row in data_rows
+        if str(_cell(row, person_column_index) or "").strip()
+    }
+    return sorted(values, key=lambda value: value.lower())
 
 
 def _to_number(value: Any) -> float:
@@ -70,20 +104,41 @@ def _gap_status(value: float) -> str:
     return "on-track"
 
 
+def _is_active_row(row: list[Any], col_map: dict[str, int]) -> bool:
+    active_column = _get_column(col_map, "Is Active?")
+    if active_column is None:
+        return True
+
+    value = str(_cell(row, active_column) or "").strip().lower()
+    return value in {"1", "1.0", "true", "yes"}
+
+
+def _is_master_contract_blank(row: list[Any], col_map: dict[str, int]) -> bool:
+    master_contract_column = _get_column(col_map, "Master Contract Opportunity")
+    if master_contract_column is None:
+        return True
+
+    value = str(_cell(row, master_contract_column) or "").strip()
+    return value in {"", "(blank)"}
+
+
 def analyze_forecast_rows(
     data_rows: list[list[Any]],
     col_map: dict[str, int],
     sls_name: str,
+    person_column: str = "SLS",
 ) -> dict[str, Any]:
     name = str(sls_name or "").strip()
     if not name:
-        raise ValueError("SLS name is required.")
+        raise ValueError(f"{person_column} name is required.")
 
     missing = [column for column in REQUIRED_COLUMNS if column not in col_map]
+    person_column_index = _get_person_column(col_map, person_column)
+    if person_column_index is None:
+        missing.append(_person_missing_label(person_column))
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
-    c_sls = col_map["SLS"]
     c_practice = col_map["Practice Area"]
     c_account = col_map["Parent Account Name"]
     c_source = _get_column(col_map, "P&L Source", "PLSource")
@@ -99,12 +154,12 @@ def analyze_forecast_rows(
     target: dict[str, float] = defaultdict(float)
     matched_sls_names: set[str] = set()
     for row in data_rows:
-        sls = _cell(row, c_sls)
-        if not sls:
+        person_value = _cell(row, person_column_index)
+        if not person_value:
             continue
 
-        sls_text = str(sls).strip()
-        if not _matches_name_permutation(sls_text, name):
+        person_text = str(person_value).strip()
+        if not _matches_name_permutation(person_text, name):
             continue
 
         header = str(_cell(row, c_header) or "").strip()
@@ -115,7 +170,7 @@ def analyze_forecast_rows(
         account = str(_cell(row, c_account) or "").strip()
         practice = str(_cell(row, c_practice) or "").strip()
         key = f"{account}__{practice}"
-        matched_sls_names.add(sls_text)
+        matched_sls_names.add(person_text)
 
         if source == "IC/Forecasted":
             forecast[key] += _to_number(_cell(row, c_forecast))
@@ -211,12 +266,16 @@ def analyze_pipeline_rows(
     col_map: dict[str, int],
     sls_name: str,
     current_year: int | None = None,
+    person_column: str = "SLS",
 ) -> dict[str, Any]:
     name = str(sls_name or "").strip()
     if not name:
-        raise ValueError("SLS name is required.")
+        raise ValueError(f"{person_column} name is required.")
 
     missing = [column for column in PIPELINE_REQUIRED_COLUMNS if column not in col_map]
+    person_column_index = _get_person_column(col_map, person_column)
+    if person_column_index is None:
+        missing.append(_person_missing_label(person_column))
     amount_column = _get_column(
         col_map,
         "Net TCV Share",
@@ -239,9 +298,9 @@ def analyze_pipeline_rows(
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
-    c_sls = col_map["SLS"]
     c_stage = col_map["Grouped Sales Stage"]
     c_year = col_map["EDC Year"]
+    sub_status_column = _get_column(col_map, "Sub-Status")
     year = current_year or date.today().year
 
     totals = {
@@ -259,10 +318,15 @@ def analyze_pipeline_rows(
         if stage not in PIPELINE_STAGES:
             continue
 
+        if sub_status_column is not None:
+            sub_status = str(_cell(row, sub_status_column) or "").strip().lower()
+            if sub_status in PIPELINE_EXCLUDED_SUB_STATUSES:
+                continue
+
         if _year_value(_cell(row, c_year)) != year:
             continue
 
-        sls_text = str(_cell(row, c_sls) or "").strip()
+        sls_text = str(_cell(row, person_column_index) or "").strip()
         if not _matches_name_permutation(sls_text, name):
             continue
 
@@ -369,12 +433,16 @@ def analyze_won_lost_rows(
     col_map: dict[str, int],
     sls_name: str,
     current_year: int | None = None,
+    person_column: str = "SLS",
 ) -> dict[str, Any]:
     name = str(sls_name or "").strip()
     if not name:
-        raise ValueError("SLS name is required.")
+        raise ValueError(f"{person_column} name is required.")
 
     missing = [column for column in PIPELINE_REQUIRED_COLUMNS if column not in col_map]
+    person_column_index = _get_person_column(col_map, person_column)
+    if person_column_index is None:
+        missing.append(_person_missing_label(person_column))
     amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
     account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
     practice_column = _get_column(col_map, "Practice Area", "Practice")
@@ -388,9 +456,8 @@ def analyze_won_lost_rows(
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
-    c_sls = col_map["SLS"]
     c_stage = col_map["Grouped Sales Stage"]
-    c_year = col_map["EDC Year"]
+    c_year = _get_column(col_map, "Year Closed") or col_map["EDC Year"]
     year = current_year or date.today().year
 
     totals = {"won": 0.0, "lost": 0.0}
@@ -404,10 +471,13 @@ def analyze_won_lost_rows(
         if normalized_stage not in {"won", "lost"}:
             continue
 
+        if not _is_active_row(row, col_map) or not _is_master_contract_blank(row, col_map):
+            continue
+
         if _year_value(_cell(row, c_year)) != year:
             continue
 
-        sls_text = str(_cell(row, c_sls) or "").strip()
+        sls_text = str(_cell(row, person_column_index) or "").strip()
         if not _matches_name_permutation(sls_text, name):
             continue
 
@@ -464,13 +534,17 @@ def analyze_pending_validation_rows(
     col_map: dict[str, int],
     sls_name: str,
     current_year: int | None = None,
+    person_column: str = "SLS",
 ) -> dict[str, Any]:
     name = str(sls_name or "").strip()
     if not name:
-        raise ValueError("SLS name is required.")
+        raise ValueError(f"{person_column} name is required.")
 
-    required_columns = ["SLS", "Sub-Status", "EDC Year"]
+    required_columns = ["Sub-Status", "EDC Year"]
     missing = [column for column in required_columns if column not in col_map]
+    person_column_index = _get_person_column(col_map, person_column)
+    if person_column_index is None:
+        missing.append(_person_missing_label(person_column))
     amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
     account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
     practice_column = _get_column(col_map, "Practice Area", "Practice")
@@ -484,7 +558,6 @@ def analyze_pending_validation_rows(
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
-    c_sls = col_map["SLS"]
     c_status = col_map["Sub-Status"]
     c_year = col_map["EDC Year"]
     year = current_year or date.today().year
@@ -499,10 +572,13 @@ def analyze_pending_validation_rows(
         if status.lower() != PENDING_VALIDATION_STATUS.lower():
             continue
 
+        if not _is_active_row(row, col_map) or not _is_master_contract_blank(row, col_map):
+            continue
+
         if _year_value(_cell(row, c_year)) != year:
             continue
 
-        sls_text = str(_cell(row, c_sls) or "").strip()
+        sls_text = str(_cell(row, person_column_index) or "").strip()
         if not _matches_name_permutation(sls_text, name):
             continue
 

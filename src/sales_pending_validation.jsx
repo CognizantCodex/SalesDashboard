@@ -1,8 +1,18 @@
 import { useEffect } from 'react';
 
-const PENDING_VALIDATION_CURRENT_URL = 'http://127.0.0.1:3001/api/pending-validation/summary/current';
+const ENTITY_CONFIG = {
+  sls: {
+    formField: 'slsName',
+    currentUrl: 'http://127.0.0.1:3001/api/pending-validation/summary/current'
+  },
+  slsm: {
+    formField: 'slsmName',
+    currentUrl: 'http://127.0.0.1:3001/api/slsm/pending-validation/summary/current'
+  }
+};
 
-export default function SalesPendingValidation({ slsName, uploadVersion, onSummaryChange }) {
+export default function SalesPendingValidation({ slsName, uploadVersion, onSummaryChange, entity = 'sls' }) {
+  const config = ENTITY_CONFIG[entity] || ENTITY_CONFIG.sls;
   useEffect(() => {
     const trimmedName = slsName.trim();
     if (!trimmedName) {
@@ -15,10 +25,10 @@ export default function SalesPendingValidation({ slsName, uploadVersion, onSumma
     async function loadPendingValidationSummary() {
       try {
         const params = new URLSearchParams({
-          slsName: trimmedName,
+          [config.formField]: trimmedName,
           currentYear: String(new Date().getFullYear())
         });
-        const response = await fetch(PENDING_VALIDATION_CURRENT_URL + '?' + params.toString(), {
+        const response = await fetch(config.currentUrl + '?' + params.toString(), {
           signal: controller.signal
         });
         const payload = await response.json();

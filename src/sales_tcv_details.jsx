@@ -13,7 +13,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export default function SalesTcvDetails({ wonLostSummary, pendingValidationSummary, onBack }) {
+export default function SalesTcvDetails({ wonLostSummary, pendingValidationSummary, onBack, entityLabel = 'SLS' }) {
   const [error, setError] = useState('');
   const [dealTypeFilter, setDealTypeFilter] = useState('All');
   const dealTypeOptions = useMemo(() => {
@@ -46,7 +46,7 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
     });
   }, [combinedAccounts]);
   const year = wonLostSummary?.year || pendingValidationSummary?.year || new Date().getFullYear();
-  const queryName = wonLostSummary?.query || pendingValidationSummary?.query || 'SLS';
+  const queryName = wonLostSummary?.query || pendingValidationSummary?.query || entityLabel;
 
   function exportExcel() {
     if (!combinedAccounts.length) {
@@ -157,7 +157,7 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
         {error && <p className="error">{error}</p>}
 
         {!combinedAccounts.length ? (
-          <p className="sls-warning summary-warning">Data does not exist for the specified SLS</p>
+          <p className="sls-warning summary-warning">Data does not exist for the specified {entityLabel}</p>
         ) : (
           <section className="table-wrap detail-table-wrap">
             <div className="table-header">

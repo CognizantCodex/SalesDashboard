@@ -1,15 +1,30 @@
 import React, { useEffect, useState } from 'react';
+import UploadOption from './upload_option.jsx';
 
-const PIPELINE_URL = 'http://127.0.0.1:3001/api/pipeline/summary';
-const PIPELINE_CURRENT_URL = 'http://127.0.0.1:3001/api/pipeline/summary/current';
-const PIPELINE_UPLOAD_URL = 'http://127.0.0.1:3001/api/pipeline/upload';
-const PIPELINE_METADATA_URL = 'http://127.0.0.1:3001/api/pipeline/upload/metadata';
+const ENTITY_CONFIG = {
+  sls: {
+    formField: 'slsName',
+    summaryUrl: 'http://127.0.0.1:3001/api/pipeline/summary',
+    currentUrl: 'http://127.0.0.1:3001/api/pipeline/summary/current',
+    uploadUrl: 'http://127.0.0.1:3001/api/pipeline/upload',
+    metadataUrl: 'http://127.0.0.1:3001/api/pipeline/upload/metadata',
+    savedTableLabel: 'pipeline_upload data'
+  },
+  slsm: {
+    formField: 'slsmName',
+    summaryUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/summary',
+    currentUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/summary/current',
+    uploadUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/upload',
+    metadataUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/upload/metadata',
+    savedTableLabel: 'slsm_pipeline_upload data'
+  }
+};
 
-export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange, onResultChange }) {
+export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange, onResultChange, entity = 'sls' }) {
+  const config = ENTITY_CONFIG[entity] || ENTITY_CONFIG.sls;
   const [pipelineWorkbook, setPipelineWorkbook] = useState(null);
   const [savedPipeline, setSavedPipeline] = useState(null);
   const [pipelineSummary, setPipelineSummary] = useState(null);
-  const [isPipelineDragging, setIsPipelineDragging] = useState(false);
   const [pipelineError, setPipelineError] = useState('');
   const [isLoadingPipeline, setIsLoadingPipeline] = useState(false);
 
@@ -18,7 +33,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
 
     async function loadSavedPipelineMetadata() {
       try {
-        const response = await fetch(PIPELINE_METADATA_URL);
+        const response = await fetch(config.metadataUrl);
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load pipeline upload metadata.');
 
@@ -85,11 +100,11 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
   async function summarizeUploadedPipeline(file, trimmedName, signal) {
     const formData = new FormData();
     formData.append('workbook', file);
-    formData.append('slsName', trimmedName);
+    formData.append(config.formField, trimmedName);
     formData.append('sheetName', 'Data');
     formData.append('currentYear', String(new Date().getFullYear()));
 
-    const response = await fetch(PIPELINE_URL, {
+    const response = await fetch(config.summaryUrl, {
       method: 'POST',
       body: formData,
       signal
@@ -101,10 +116,10 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
 
   async function summarizeSavedPipeline(trimmedName, signal) {
     const params = new URLSearchParams({
-      slsName: trimmedName,
+      [config.formField]: trimmedName,
       currentYear: String(new Date().getFullYear())
     });
-    const response = await fetch(PIPELINE_CURRENT_URL + '?' + params.toString(), { signal });
+    const response = await fetch(config.currentUrl + '?' + params.toString(), { signal });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || payload.error || 'Saved pipeline summary failed.');
     if (!payload.available) throw new Error('No saved pipeline upload is available. Upload a pipeline workbook first.');
@@ -116,7 +131,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
     formData.append('workbook', file);
     formData.append('sheetName', 'Data');
 
-    const response = await fetch(PIPELINE_UPLOAD_URL, {
+    const response = await fetch(config.uploadUrl, {
       method: 'POST',
       body: formData
     });
@@ -125,7 +140,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
     return payload.database;
   }
 
-  async function selectPipelineWorkbook(file) {
+  async function selectPipelineWorkbook(file, source = 'select') {
     if (!file) {
       setPipelineWorkbook(null);
       setPipelineSummary(null);
@@ -141,7 +156,7 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
       setPipelineSummary(null);
       onSummaryChange(null);
       onResultChange(null);
-      setPipelineError('Please select a .xlsb, .xlsx, or .xlsm workbook.');
+      setPipelineError('Please ' + (source === 'drop' ? 'drop' : 'select') + ' a .xlsb, .xlsx, or .xlsm workbook.');
       return;
     }
 
@@ -164,12 +179,6 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
     }
   }
 
-  function handlePipelineDrop(event) {
-    event.preventDefault();
-    setIsPipelineDragging(false);
-    selectPipelineWorkbook(event.dataTransfer.files?.[0]);
-  }
-
   const uploadTitle = pipelineWorkbook
     ? pipelineWorkbook.name
     : savedPipeline?.sourceFilename || 'Drop your pipeline workbook here';
@@ -179,33 +188,19 @@ export default function SalesPipeline({ slsName, onSummaryChange, onUploadChange
     : pipelineSummary
       ? pipelineSummary.metrics.rows.toLocaleString() + ' rows summarized for CY ' + pipelineSummary.year
       : savedPipeline?.rowsSaved
-        ? savedPipeline.rowsSaved.toLocaleString() + ' rows loaded from pipeline_upload data'
+        ? savedPipeline.rowsSaved.toLocaleString() + ' rows loaded from ' + config.savedTableLabel
         : 'Supports .xlsb and .xlsx';
 
   return (
-    <section
-      className={'upload-card pipeline-upload' + ((pipelineWorkbook || savedPipeline?.rowsSaved) ? ' done' : '') + (isPipelineDragging ? ' drag' : '')}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setIsPipelineDragging(true);
-      }}
-      onDragLeave={() => setIsPipelineDragging(false)}
-      onDrop={handlePipelineDrop}
-    >
-      <label>
-        <span className="upload-kicker">Pipeline</span>
-        <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" />
-        </svg>
-        <p className="upload-title">{uploadTitle}</p>
-        <p className="upload-sub">{uploadSubText}</p>
-        {pipelineError && <p className="upload-error">{pipelineError}</p>}
-        <input
-          type="file"
-          accept=".xlsb,.xlsx,.xlsm"
-          onChange={(event) => selectPipelineWorkbook(event.target.files?.[0] || null)}
-        />
-      </label>
-    </section>
+    <UploadOption
+      className="pipeline-upload"
+      label="Pipeline"
+      title={uploadTitle}
+      subtitle={uploadSubText}
+      error={pipelineError}
+      icon="pipeline"
+      isComplete={Boolean(pipelineWorkbook || savedPipeline?.rowsSaved)}
+      onFileSelect={selectPipelineWorkbook}
+    />
   );
 }

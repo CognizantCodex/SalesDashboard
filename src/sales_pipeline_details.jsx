@@ -13,7 +13,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export default function SalesPipelineDetails({ pipelineResult, onBack }) {
+export default function SalesPipelineDetails({ pipelineResult, onBack, entityLabel = 'SLS' }) {
   const [error, setError] = useState('');
   const [dealTypeFilter, setDealTypeFilter] = useState('All');
   const dealTypeOptions = useMemo(() => {
@@ -46,7 +46,7 @@ export default function SalesPipelineDetails({ pipelineResult, onBack }) {
     const { sheetRows, merges } = buildPipelineSheet(filteredAccounts);
     const workbook = createXlsxWorkbook(sheetRows, merges);
     const dealTypeSuffix = dealTypeFilter === 'All' ? '' : '_' + safeFileName(dealTypeFilter);
-    downloadBlob(workbook, (pipelineResult.query || 'SLS') + '_Pipeline_' + (pipelineResult.year || new Date().getFullYear()) + dealTypeSuffix + '.xlsx');
+    downloadBlob(workbook, (pipelineResult.query || entityLabel) + '_Pipeline_' + (pipelineResult.year || new Date().getFullYear()) + dealTypeSuffix + '.xlsx');
   }
 
   function buildPipelineSheet(accounts) {
@@ -152,7 +152,7 @@ export default function SalesPipelineDetails({ pipelineResult, onBack }) {
         {error && <p className="error">{error}</p>}
 
         {!filteredAccounts?.length ? (
-          <p className="sls-warning summary-warning">Data does not exist for the specified SLS</p>
+          <p className="sls-warning summary-warning">Data does not exist for the specified {entityLabel}</p>
         ) : (
           <section className="table-wrap detail-table-wrap">
             <div className="table-header">
