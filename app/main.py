@@ -4,6 +4,7 @@ import asyncio
 import re
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -34,7 +35,25 @@ from .database import (
 from .forecast_agent import SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_workbook, result_to_csv, unique_person_values
 
 
-app = FastAPI(title="SLS Forecast Agent", version="1.0.0")
+OPENAPI_TAGS = [
+    {"name": "Health", "description": "Service health checks."},
+    {"name": "Forecast", "description": "SLS revenue forecast APIs."},
+    {"name": "SLSM Forecast", "description": "SLSM revenue forecast and option APIs."},
+    {"name": "SLSL Summary", "description": "SLSL dashboard rollup APIs."},
+    {"name": "SLSM Breakdown", "description": "SLSM dashboard child SLS breakdown APIs."},
+    {"name": "Pipeline", "description": "SLS pipeline upload and summary APIs."},
+    {"name": "SLSM Pipeline", "description": "SLSM pipeline upload and summary APIs."},
+    {"name": "Realized TCV", "description": "Won/lost and pending validation APIs."},
+    {"name": "SLSM Realized TCV", "description": "SLSM won/lost and pending validation APIs."},
+]
+
+
+app = FastAPI(
+    title="SLS Forecast Agent",
+    version="1.0.0",
+    description="Swagger/OpenAPI documentation for the Sales Dashboard backend APIs.",
+    openapi_tags=OPENAPI_TAGS,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -861,3 +880,33 @@ def build_slsm_sls_breakdown(slsm_name: str, current_year: int | None = None) ->
             },
         },
     }
+
+
+def _tag_routes_for_swagger() -> None:
+    tag_rules = [
+        ("/health", "Health"),
+        ("/api/slsl/", "SLSL Summary"),
+        ("/api/slsm/sls-breakdown/", "SLSM Breakdown"),
+        ("/api/slsm/forecast/", "SLSM Forecast"),
+        ("/api/slsm/pipeline/", "SLSM Pipeline"),
+        ("/api/slsm/wins-lost/", "SLSM Realized TCV"),
+        ("/api/slsm/won-lost/", "SLSM Realized TCV"),
+        ("/api/slsm/pending-validation/", "SLSM Realized TCV"),
+        ("/api/forecast/", "Forecast"),
+        ("/api/pipeline/", "Pipeline"),
+        ("/api/wins-lost/", "Realized TCV"),
+        ("/api/won-lost/", "Realized TCV"),
+        ("/api/pending-validation/", "Realized TCV"),
+    ]
+
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+
+        for prefix, tag in tag_rules:
+            if route.path.startswith(prefix):
+                route.tags = [tag]
+                break
+
+
+_tag_routes_for_swagger()

@@ -3,6 +3,8 @@ node_modules/
 dist/
 __pycache__/
 *.py[cod]
+.coverage
+.pytest_cache/
 .DS_Store
 .env
 .env.*
