@@ -8,16 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from .database import (
+    load_pending_validation_metadata,
     load_pipeline_upload,
     load_pipeline_upload_metadata,
     load_revenue_forecast,
     load_revenue_forecast_metadata,
     load_wins_lost_metadata,
+    replace_pending_validation,
     replace_pipeline_upload,
     replace_revenue_forecast,
     replace_wins_lost,
 )
-from .forecast_agent import analyze_forecast_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_workbook, result_to_csv
+from .forecast_agent import analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_workbook, result_to_csv
 
 
 app = FastAPI(title="SLS Forecast Agent", version="1.0.0")
@@ -75,6 +77,12 @@ async def wins_lost_upload_metadata() -> dict:
     return {"available": metadata["available"], "database": metadata}
 
 
+@app.get("/api/pending-validation/upload/metadata")
+async def pending_validation_upload_metadata() -> dict:
+    metadata = await asyncio.to_thread(load_pending_validation_metadata)
+    return {"available": metadata["available"], "database": metadata}
+
+
 @app.get("/api/pipeline/summary/current")
 async def current_pipeline_summary(
     slsName: str = Query(...),
@@ -113,7 +121,30 @@ async def current_won_lost_summary(
             "table": "pipeline_upload",
             "rowsSaved": len(rows),
             "sourceFilename": source_filename,
-            "sheet": "Wins",
+            "sheet": "Data",
+        }
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/pending-validation/summary/current")
+async def current_pending_validation_summary(
+    slsName: str = Query(...),
+    currentYear: int | None = Query(None),
+) -> dict:
+    try:
+        headers, rows, source_filename = await asyncio.to_thread(load_pipeline_upload)
+        if not rows:
+            return {"available": False, "database": {"table": "pipeline_upload", "rowsSaved": 0}}
+
+        col_map = {header: index for index, header in enumerate(headers) if header}
+        result = await asyncio.to_thread(analyze_pending_validation_rows, rows, col_map, slsName, currentYear)
+        result["database"] = {
+            "table": "pipeline_upload",
+            "rowsSaved": len(rows),
+            "sourceFilename": source_filename,
+            "sheet": "Data",
         }
         return result
     except ValueError as exc:
@@ -135,6 +166,12 @@ async def upload_pipeline(
             wins_lost_saved = await asyncio.to_thread(replace_wins_lost, wins_headers, wins_rows, workbook.filename or "")
         except ValueError:
             wins_lost_saved = 0
+        pending_validation_saved = 0
+        try:
+            pending_headers, pending_rows, _pending_col_map = parse_workbook(file_bytes, workbook.filename or "", "Pending Validation")
+            pending_validation_saved = await asyncio.to_thread(replace_pending_validation, pending_headers, pending_rows, workbook.filename or "")
+        except ValueError:
+            pending_validation_saved = 0
         return {
             "available": rows_saved > 0,
             "database": {
@@ -143,6 +180,8 @@ async def upload_pipeline(
                 "sourceFilename": workbook.filename or "",
                 "winsLostTable": "wins_lost",
                 "winsLostRowsSaved": wins_lost_saved,
+                "pendingValidationTable": "pending_validation",
+                "pendingValidationRowsSaved": pending_validation_saved,
             },
         }
     except ValueError as exc:

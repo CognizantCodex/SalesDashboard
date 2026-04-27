@@ -1,11 +1,24 @@
 import React from 'react';
 
-export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary }) {
-  if (!revenueSummary && !pipelineSummary && !wonLostSummary) return null;
+export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, onRevenueDetailsClick }) {
+  if (!revenueSummary && !pipelineSummary && !wonLostSummary && !pendingValidationSummary) return null;
+
+  const realizedYear = wonLostSummary?.year || pendingValidationSummary?.year;
+  const wonTcv = wonLostSummary?.metrics?.won || 0;
+  const pendingValidationTcv = pendingValidationSummary?.metrics?.pendingValidation || 0;
+  const totalTcvMillions = roundedMillions(wonTcv) + roundedMillions(pendingValidationTcv);
+  const showRevenue = (revenueSummary?.forecast || 0) !== 0;
+  const showPipeline = (pipelineSummary?.metrics?.pipeline || 0) !== 0;
+  const showRealizedTcv = totalTcvMillions !== 0;
+  const hasVisibleSummary = showRevenue || showPipeline || showRealizedTcv;
+
+  if (!hasVisibleSummary) {
+    return <p className="sls-warning summary-warning">Data does not exist for the specified SLS</p>;
+  }
 
   return (
     <section className="summary-panel">
-      <SummaryGroup title="Revenue Summary" hidden={!revenueSummary}>
+      <SummaryGroup title="Revenue Summary" hidden={!showRevenue} action={onRevenueDetailsClick ? <button className="summary-link" onClick={onRevenueDetailsClick}>Revenue Details</button> : null}>
         {revenueSummary && (
           <>
             <Metric label="Forecast" value={revenueSummary.labels.forecast} />
@@ -16,7 +29,7 @@ export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostS
         )}
       </SummaryGroup>
 
-      <SummaryGroup title={pipelineSummary ? 'Pipeline Summary CY ' + pipelineSummary.year : 'Pipeline Summary'} hidden={!pipelineSummary}>
+      <SummaryGroup title={pipelineSummary ? 'Pipeline Summary CY ' + pipelineSummary.year : 'Pipeline Summary'} hidden={!showPipeline}>
         {pipelineSummary && (
           <>
             <Metric label="Total Pipeline" value={pipelineSummary.metrics.labels.pipeline} />
@@ -27,24 +40,21 @@ export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostS
         )}
       </SummaryGroup>
 
-      <SummaryGroup title={wonLostSummary ? 'Realized TCV Summary CY ' + wonLostSummary.year : 'Realized TCV Summary'} hidden={!wonLostSummary}>
-        {wonLostSummary && (
-          <>
-            <Metric label="Total TCV" value={wonLostSummary.metrics.labels.total} />
-            <Metric label="Won TCV" value={wonLostSummary.metrics.labels.won} />
-          </>
-        )}
+      <SummaryGroup title={realizedYear ? 'Realized TCV Summary CY ' + realizedYear : 'Realized TCV Summary'} hidden={!showRealizedTcv}>
+        <Metric label="Total TCV" value={formatMillionLabel(totalTcvMillions)} />
+        <Metric label="Won TCV" value={wonLostSummary?.metrics?.labels?.won || '$0.0M'} />
+        <Metric label="Pending Validation TCV" value={pendingValidationSummary?.metrics?.labels?.pendingValidation || '$0.0M'} />
       </SummaryGroup>
     </section>
   );
 }
 
-function SummaryGroup({ title, hidden, children }) {
+function SummaryGroup({ title, hidden, action, children }) {
   if (hidden) return null;
 
   return (
     <section className="summary-group">
-      <h2>{title}</h2>
+      <h2>{title}{action}</h2>
       <div className="summary-grid">{children}</div>
     </section>
   );
@@ -63,4 +73,12 @@ function statusClass(status) {
   if (status === 'behind') return 'red';
   if (status === 'ahead') return 'green';
   return 'muted';
+}
+
+function roundedMillions(value) {
+  return Math.round((value / 1000000) * 10) / 10;
+}
+
+function formatMillionLabel(value) {
+  return '$' + value.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
 }

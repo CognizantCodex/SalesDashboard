@@ -87,13 +87,18 @@ header span {
   grid-column: 1 / -1;
 }
 
-.summary-panel {
+.matched-sls-chips {
   order: 4;
   grid-column: 1 / -1;
 }
 
-.revenue-flow {
+.summary-panel {
   order: 5;
+  grid-column: 1 / -1;
+}
+
+.revenue-flow {
+  order: 6;
   grid-column: 1 / -1;
 }
 
@@ -181,6 +186,11 @@ header span {
   font-weight: 700;
 }
 
+.summary-warning {
+  margin: 0;
+}
+
+
 .search-row {
   display: flex;
   gap: 8px;
@@ -259,6 +269,55 @@ header span {
   margin-top: 0.7rem;
 }
 
+
+.summary-group h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.summary-link,
+.back-link {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--brand);
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.summary-link {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.back-link {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  margin-bottom: 0.75rem;
+}
+
+.summary-link:hover,
+.back-link:hover {
+  background: #eef5fc;
+  border-color: #b9d4ec;
+}
+
+.detail-container .summary-panel {
+  margin-top: 0;
+}
+
+.detail-chips {
+  margin-bottom: 0.7rem;
+}
+
+.detail-table-wrap {
+  margin-top: 0.9rem;
+}
+
 .summary-group h2 {
   color: var(--brand);
   font-size: 12.5px;
@@ -273,8 +332,9 @@ header span {
   gap: 7px;
 }
 
-.revenue-chips {
-  margin-top: 0.9rem;
+.revenue-chips,
+.matched-sls-chips {
+  margin-top: 0.7rem;
 }
 
 .metric {
@@ -469,13 +529,71 @@ tr.total-row td:nth-child(n + 3) {
   font-size: 14px;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
+  .container {
+    max-width: 100%;
+    padding-inline: 1.1rem;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
   header {
-    padding: 0.85rem 1.1rem;
+    padding-inline: 1.25rem;
+  }
+
+  .upload-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .upload-card {
+    min-height: 118px;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    min-width: 760px;
+  }
+}
+
+@media (max-width: 640px) {
+  header {
+    padding: 0.75rem 1rem;
+    align-items: flex-start;
+  }
+
+  header h1 {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 17px;
+  }
+
+  header span {
+    margin-left: 0;
   }
 
   .container {
-    padding: 1rem;
+    padding: 0.85rem 0.75rem 1.4rem;
+  }
+
+  .upload-grid {
+    gap: 0.7rem;
+  }
+
+  .upload-card {
+    padding: 0.95rem 0.9rem;
+  }
+
+  .search-area {
+    margin-top: 0.35rem;
   }
 
   .search-row,
@@ -484,8 +602,22 @@ tr.total-row td:nth-child(n + 3) {
     flex-direction: column;
   }
 
-  .upload-grid {
-    grid-template-columns: 1fr;
+  .search-row button,
+  .export-btn {
+    width: 100%;
+  }
+
+  .matched-sls-chips {
+    margin-top: 0.35rem;
+  }
+
+  .chips {
+    gap: 5px;
+  }
+
+  .chip {
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
 
   .metrics,
@@ -494,15 +626,74 @@ tr.total-row td:nth-child(n + 3) {
     grid-template-columns: 1fr;
   }
 
+  .summary-panel {
+    gap: 0.6rem;
+    margin-top: 0.45rem;
+  }
+
   .metric {
-    min-height: 56px;
+    min-height: 54px;
+  }
+
+  .metric-val {
+    font-size: 19px;
+  }
+
+  .table-header {
+    gap: 0.65rem;
+    padding: 0.75rem;
+  }
+
+  .table-header h2 {
+    font-size: 14px;
+    line-height: 1.3;
   }
 
   table {
-    min-width: 760px;
+    min-width: 700px;
+    font-size: 13px;
   }
 
-  .table-wrap {
-    overflow-x: auto;
+  thead th,
+  tr.acct-row td,
+  tr.detail-row td,
+  tr.total-row td {
+    padding-inline: 9px;
+  }
+
+  .empty-state {
+    padding: 1.4rem 1rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .container {
+    padding-inline: 0.6rem;
+  }
+
+  .upload-title {
+    font-size: 13px;
+  }
+
+  .upload-sub,
+  .sls-warning,
+  .error {
+    font-size: 11.5px;
+  }
+
+  .metric {
+    padding: 0.45rem 0.55rem;
+  }
+
+  .metric-label {
+    font-size: 9px;
+  }
+
+  .metric-val {
+    font-size: 18px;
+  }
+
+  table {
+    min-width: 660px;
   }
 }

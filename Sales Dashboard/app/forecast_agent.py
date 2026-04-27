@@ -30,6 +30,7 @@ PIPELINE_REQUIRED_COLUMNS = [
 
 PIPELINE_STAGES = {"Qualified", "Un-Qualified"}
 WON_LOST_STAGES = {"Won", "Lost"}
+PENDING_VALIDATION_STATUS = "Pending Validation"
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -89,7 +90,6 @@ def analyze_forecast_rows(
     c_header = _get_column(col_map, "P&L Header", "PLHeader")
     c_forecast = col_map["FY 26 (SL)"]
     c_target = col_map["Target 2026"]
-
     if c_source is None:
         raise ValueError("Missing columns: P&L Source or PLSource")
     if c_header is None:
@@ -98,15 +98,13 @@ def analyze_forecast_rows(
     forecast: dict[str, float] = defaultdict(float)
     target: dict[str, float] = defaultdict(float)
     matched_sls_names: set[str] = set()
-    normalized_name = name.lower()
-
     for row in data_rows:
         sls = _cell(row, c_sls)
         if not sls:
             continue
 
         sls_text = str(sls).strip()
-        if normalized_name not in sls_text.lower():
+        if not _matches_name_permutation(sls_text, name):
             continue
 
         header = str(_cell(row, c_header) or "").strip()
@@ -189,7 +187,6 @@ def analyze_forecast_rows(
         "target": sum(row["target"] for row in rows),
     }
     totals["gap"] = totals["target"] - totals["forecast"]
-
     return {
         "query": name,
         "matchedSlsNames": sorted(matched_sls_names),
@@ -351,6 +348,64 @@ def analyze_won_lost_rows(
                 "total": _pipeline_money_label(total),
                 "won": _pipeline_money_label(totals["won"]),
                 "lost": _pipeline_money_label(totals["lost"]),
+            },
+        },
+    }
+
+
+def analyze_pending_validation_rows(
+    data_rows: list[list[Any]],
+    col_map: dict[str, int],
+    sls_name: str,
+    current_year: int | None = None,
+) -> dict[str, Any]:
+    name = str(sls_name or "").strip()
+    if not name:
+        raise ValueError("SLS name is required.")
+
+    required_columns = ["SLS", "Sub-Status", "EDC Year"]
+    missing = [column for column in required_columns if column not in col_map]
+    amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
+    if amount_column is None:
+        missing.append("Net TCV Share")
+    if missing:
+        raise ValueError(f"Missing columns: {', '.join(missing)}")
+
+    c_sls = col_map["SLS"]
+    c_status = col_map["Sub-Status"]
+    c_year = col_map["EDC Year"]
+    year = current_year or date.today().year
+
+    total = 0.0
+    matched_sls_names: set[str] = set()
+    rows_saved = 0
+
+    for row in data_rows:
+        status = str(_cell(row, c_status) or "").strip()
+        if status.lower() != PENDING_VALIDATION_STATUS.lower():
+            continue
+
+        if _year_value(_cell(row, c_year)) != year:
+            continue
+
+        sls_text = str(_cell(row, c_sls) or "").strip()
+        if not _matches_name_permutation(sls_text, name):
+            continue
+
+        total += _to_number(_cell(row, amount_column))
+        matched_sls_names.add(sls_text)
+        rows_saved += 1
+
+    return {
+        "available": True,
+        "query": name,
+        "year": year,
+        "matchedSlsNames": sorted(matched_sls_names),
+        "metrics": {
+            "pendingValidation": total,
+            "rows": rows_saved,
+            "labels": {
+                "pendingValidation": _pipeline_money_label(total),
             },
         },
     }

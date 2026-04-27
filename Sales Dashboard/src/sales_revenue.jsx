@@ -16,7 +16,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, onSummaryChange }) {
+export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, onSummaryChange, onMatchedNamesChange, onResultChange }) {
   const [workbook, setWorkbook] = useState(null);
   const [result, setResult] = useState(null);
   const [savedForecast, setSavedForecast] = useState(null);
@@ -33,6 +33,23 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       runAgent();
     }
   }, [runRequestId]);
+
+  useEffect(() => {
+    const trimmedName = slsName.trim();
+    if (!trimmedName) {
+      setResult(null);
+      onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      loadStoredForecast(trimmedName, { silent: true });
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [slsName]);
 
   useEffect(() => {
     let ignore = false;
@@ -74,6 +91,8 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     if (!trimmedName) {
       setResult(null);
       onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
       setError('Enter an SLS name before running analysis.');
       return;
     }
@@ -91,9 +110,13 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
         setSavedForecast(payload.database);
         setResult(payload);
         onSummaryChange(payload.metrics);
+        onMatchedNamesChange(payload.matchedSlsNames || []);
+        onResultChange(payload);
       } else if (!options.silent) {
         setResult(null);
         onSummaryChange(null);
+        onMatchedNamesChange([]);
+        onResultChange(null);
         setError('No saved forecast data is available. Upload a workbook first.');
       }
     } catch (err) {
@@ -113,6 +136,8 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     setError('');
     setResult(null);
     onSummaryChange(null);
+    onMatchedNamesChange([]);
+    onResultChange(null);
 
     const formData = new FormData();
     formData.append('workbook', workbook);
@@ -129,6 +154,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       setSavedForecast(payload.database);
       setResult(payload);
       onSummaryChange(payload.metrics);
+      onMatchedNamesChange(payload.matchedSlsNames || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -398,6 +424,8 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     setError('');
     setResult(null);
     onSummaryChange(null);
+    onMatchedNamesChange([]);
+    onResultChange(null);
   }
 
   return (
@@ -432,63 +460,15 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
               setSavedForecast(null);
               setError('');
               setResult(null);
+              onMatchedNamesChange([]);
+              onResultChange(null);
             }}
           />
         </label>
       </section>
 
       <section className="revenue-flow">
-        {result?.matchedSlsNames?.length > 0 && (
-          <div className="chips revenue-chips">
-            {result.matchedSlsNames.map((name) => <span className="chip" key={name}>{name}</span>)}
-          </div>
-        )}
-
         {error && <p className="error">{error}</p>}
-
-        {!result && !error && (
-          <div className="empty-state">
-            Enter an SLS name and run analysis to view saved forecast data, or upload a new workbook.
-          </div>
-        )}
-
-        {result && (
-          <section className="table-wrap">
-              <div className="table-header">
-                <h2>{result.query} - Account & Practice Breakdown</h2>
-                <button className="export-btn" onClick={exportExcel}>Export Excel</button>
-              </div>
-
-              <table>
-                <thead>
-                  <tr>
-                    <th>Account</th>
-                    <th>Practice</th>
-                    <th>Forecast<br /><span>SL_FY'26</span></th>
-                    <th>Target<br /><span>Target-2026</span></th>
-                    <th>Gap<br /><span>FY'26-Gap SL</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {accountRows.map((row, index) => (
-                    row.type === 'account-heading' ? (
-                      <tr key={row.type + '-' + row.account + '-' + index} className="acct-row">
-                        <td colSpan="5">{row.account}</td>
-                      </tr>
-                    ) : (
-                      <tr key={row.type + '-' + row.account + '-' + (row.practice || index)} className={row.type === 'account-total' ? 'total-row' : 'detail-row'}>
-                        <td>{row.type === 'account-total' ? row.account + ' - Total' : ''}</td>
-                        <td>{row.type === 'practice' ? row.practice : ''}</td>
-                        <td>{row.labels.forecast}</td>
-                        <td>{row.labels.target}</td>
-                        <td className={statusClass(row.status)}>{row.labels.gap}</td>
-                      </tr>
-                    )
-                  ))}
-                </tbody>
-              </table>
-          </section>
-        )}
       </section>
     </>
   );

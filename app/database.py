@@ -11,6 +11,7 @@ DATABASE_PATH = Path(__file__).resolve().parent.parent / "sales_dashboard.db"
 SYSTEM_COLUMNS = {"id", "source_filename", "row_number"}
 PIPELINE_UPLOAD_TABLE = "pipeline_upload"
 WINS_LOST_TABLE = "wins_lost"
+PENDING_VALIDATION_TABLE = "pending_validation"
 
 
 def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
@@ -124,6 +125,18 @@ def load_wins_lost_metadata() -> dict[str, Any]:
 
 def load_wins_lost() -> tuple[list[str], list[list[Any]], str | None]:
     return _load_single_row_payload(WINS_LOST_TABLE)
+
+
+def replace_pending_validation(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return _replace_single_row_payload(PENDING_VALIDATION_TABLE, headers, rows, source_filename)
+
+
+def load_pending_validation_metadata() -> dict[str, Any]:
+    return _load_single_row_payload_metadata(PENDING_VALIDATION_TABLE)
+
+
+def load_pending_validation() -> tuple[list[str], list[list[Any]], str | None]:
+    return _load_single_row_payload(PENDING_VALIDATION_TABLE)
 
 
 def load_revenue_forecast_metadata() -> dict[str, Any]:
