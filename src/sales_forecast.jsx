@@ -35,6 +35,8 @@ export default function SalesForecast() {
   const [matchedSlsNames, setMatchedSlsNames] = useState([]);
   const [pipelineUploadVersion, setPipelineUploadVersion] = useState(0);
   const [forecastWorkbook, setForecastWorkbook] = useState(null);
+  const [selectedSlsmName, setSelectedSlsmName] = useState('');
+  const [slsmReturnDashboard, setSlsmReturnDashboard] = useState('');
   const trimmedSlsName = slsName.trim();
   const totalTcvMillions =
     roundedMillions(wonLostSummary?.metrics?.won || 0) +
@@ -49,12 +51,31 @@ export default function SalesForecast() {
   function handleDashboardChange(dashboard) {
     setActiveDashboard(dashboard);
     setCurrentPage('dashboard');
+    setSlsmReturnDashboard('');
+  }
+
+  function handleSlsmDrilldown(slsmName) {
+    setSelectedSlsmName(slsmName);
+    setSlsmReturnDashboard('slsl');
+    setActiveDashboard('slsm');
+    setCurrentPage('dashboard');
+  }
+
+  function handleSlsmBack() {
+    setActiveDashboard(slsmReturnDashboard || 'slsl');
+    setSlsmReturnDashboard('');
+    setCurrentPage('dashboard');
   }
 
   if (activeDashboard === 'slsm') {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
-        <SlsmSummary forecastWorkbook={forecastWorkbook} onForecastWorkbookChange={setForecastWorkbook} />
+        <SlsmSummary
+          forecastWorkbook={forecastWorkbook}
+          onForecastWorkbookChange={setForecastWorkbook}
+          selectedSlsmName={selectedSlsmName}
+          onBackToSlsl={slsmReturnDashboard === 'slsl' ? handleSlsmBack : null}
+        />
       </DashboardShell>
     );
   }
@@ -62,7 +83,7 @@ export default function SalesForecast() {
   if (activeDashboard === 'slsl') {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
-        <SlslSummary forecastWorkbook={forecastWorkbook} onForecastWorkbookChange={setForecastWorkbook} />
+        <SlslSummary forecastWorkbook={forecastWorkbook} onForecastWorkbookChange={setForecastWorkbook} onSlsmSelect={handleSlsmDrilldown} />
       </DashboardShell>
     );
   }
@@ -145,7 +166,7 @@ export default function SalesForecast() {
                 onChange={(event) => setSlsName(event.target.value)}
               />
               <button className="primary" onClick={() => setRunRequestId((requestId) => requestId + 1)} disabled={isRevenueLoading}>
-                {isRevenueLoading ? 'Running...' : 'Run Analysis'}
+                {isRevenueLoading ? <><span className="spinner button-spinner" aria-hidden="true" />Running...</> : 'Run Analysis'}
               </button>
             </div>
           </section>

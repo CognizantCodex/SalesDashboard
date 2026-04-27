@@ -120,6 +120,24 @@ header span {
   margin-left: 4px;
 }
 
+.header-back-link {
+  margin-left: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--brand);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0.4rem 0.65rem;
+}
+
+.header-back-link:hover,
+.header-back-link:focus-visible {
+  border-color: var(--brand-2);
+  color: var(--brand-2);
+}
+
 .container {
   max-width: 1280px;
   margin: 0 auto;
@@ -291,6 +309,10 @@ header span {
 }
 
 .search-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
   padding: 0 18px;
   height: 36px;
   background: var(--brand);
@@ -480,6 +502,25 @@ header span {
   color: #45546a;
   font-size: 12px;
   padding-left: 5px;
+}
+
+.table-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #1d4f91;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.table-link:hover,
+.table-link:focus-visible {
+  color: var(--accent);
 }
 
 .slsl-summary-table tr.slsl-total-row td {
@@ -725,6 +766,37 @@ tr.total-row td:nth-child(n + 3) {
   padding: 2rem 1.5rem;
   color: #94a3b8;
   font-size: 14px;
+}
+
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(47, 111, 165, 0.2);
+  border-top-color: var(--brand-2);
+  border-radius: 999px;
+  display: inline-block;
+  flex: 0 0 auto;
+  animation: spin 0.75s linear infinite;
+}
+
+.button-spinner {
+  width: 14px;
+  height: 14px;
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .empty-panel {
