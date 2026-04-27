@@ -1,14 +1,35 @@
 import React, { useState } from 'react';
 import SalesRevenue from './sales_revenue.jsx';
+import SalesRevenueDetails from './sales_revenue_details.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
 import SalesSummary from './sales_summary.jsx';
+import SalesWonLost from './sales_won_lost.jsx';
+import SalesPendingValidation from './sales_pending_validation.jsx';
 
 export default function SalesForecast() {
   const [slsName, setSlsName] = useState('');
   const [runRequestId, setRunRequestId] = useState(0);
   const [isRevenueLoading, setIsRevenueLoading] = useState(false);
   const [revenueSummary, setRevenueSummary] = useState(null);
+  const [revenueResult, setRevenueResult] = useState(null);
+  const [currentPage, setCurrentPage] = useState('dashboard');
   const [pipelineSummary, setPipelineSummary] = useState(null);
+  const [wonLostSummary, setWonLostSummary] = useState(null);
+  const [pendingValidationSummary, setPendingValidationSummary] = useState(null);
+  const [matchedSlsNames, setMatchedSlsNames] = useState([]);
+  const [pipelineUploadVersion, setPipelineUploadVersion] = useState(0);
+
+  if (currentPage === 'revenue-details') {
+    return (
+      <SalesRevenueDetails
+        revenueResult={revenueResult}
+        revenueSummary={revenueSummary}
+        matchedSlsNames={matchedSlsNames}
+        slsName={slsName}
+        onBack={() => setCurrentPage('dashboard')}
+      />
+    );
+  }
 
   return (
     <>
@@ -26,8 +47,16 @@ export default function SalesForecast() {
             runRequestId={runRequestId}
             onLoadingChange={setIsRevenueLoading}
             onSummaryChange={setRevenueSummary}
+            onMatchedNamesChange={setMatchedSlsNames}
+            onResultChange={setRevenueResult}
           />
-          <SalesPipeline slsName={slsName} onSummaryChange={setPipelineSummary} />
+          <SalesPipeline
+            slsName={slsName}
+            onSummaryChange={setPipelineSummary}
+            onUploadChange={() => setPipelineUploadVersion((version) => version + 1)}
+          />
+          <SalesWonLost slsName={slsName} uploadVersion={pipelineUploadVersion} onSummaryChange={setWonLostSummary} />
+          <SalesPendingValidation slsName={slsName} uploadVersion={pipelineUploadVersion} onSummaryChange={setPendingValidationSummary} />
 
           <section className="search-area forecast-search">
             {!slsName.trim() && <p className="sls-warning">Enter an SLS name to summarize pipeline.</p>}
@@ -44,7 +73,19 @@ export default function SalesForecast() {
             </div>
           </section>
 
-          <SalesSummary revenueSummary={revenueSummary} pipelineSummary={pipelineSummary} />
+          {matchedSlsNames.length > 0 && (
+            <div className="chips matched-sls-chips">
+              {matchedSlsNames.map((name) => <span className="chip" key={name}>{name}</span>)}
+            </div>
+          )}
+
+          <SalesSummary
+            revenueSummary={revenueSummary}
+            pipelineSummary={pipelineSummary}
+            wonLostSummary={wonLostSummary}
+            pendingValidationSummary={pendingValidationSummary}
+            onRevenueDetailsClick={() => setCurrentPage('revenue-details')}
+          />
         </div>
       </main>
     </>
