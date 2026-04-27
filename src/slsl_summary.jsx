@@ -6,7 +6,7 @@ const REVENUE_METADATA_URL = 'http://127.0.0.1:3001/api/forecast/current/metadat
 const PIPELINE_METADATA_URL = 'http://127.0.0.1:3001/api/pipeline/upload/metadata';
 const SLSL_SUMMARY_URL = 'http://127.0.0.1:3001/api/slsl/summary/current';
 
-export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange }) {
+export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange, onSlsmSelect }) {
   const [pipelineWorkbook, setPipelineWorkbook] = useState(null);
   const [savedRevenue, setSavedRevenue] = useState(null);
   const [savedPipeline, setSavedPipeline] = useState(null);
@@ -224,7 +224,7 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
 
           {summaryError && <p className="error">{summaryError}</p>}
           {isLoadingSummary ? (
-            <p className="empty-state">Loading SLSM summary...</p>
+            <LoadingState label="Loading SLSM summary..." />
           ) : summaryRows.length === 0 ? (
             <p className="empty-state">No SLSM summary data is available.</p>
           ) : (
@@ -246,7 +246,11 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
               <tbody>
                 {summaryRows.map((row) => (
                   <tr className="detail-row" key={row.slsmName}>
-                    <td>{row.slsmName}</td>
+                    <td>
+                      <button className="table-link" type="button" onClick={() => onSlsmSelect?.(row.slsmName)}>
+                        {row.slsmName}
+                      </button>
+                    </td>
                     <td>{row.revenue.labels.forecast}</td>
                     <td>{row.revenue.labels.target}</td>
                     <td className={statusClass(row.revenue.status)}>{row.revenue.labels.gap}</td>
@@ -283,6 +287,15 @@ function statusClass(status) {
   if (status === 'behind') return 'red';
   if (status === 'ahead') return 'green';
   return 'muted';
+}
+
+function LoadingState({ label }) {
+  return (
+    <p className="empty-state loading-state">
+      <span className="spinner" aria-hidden="true" />
+      {label}
+    </p>
+  );
 }
 
 function Metric({ label, value, tone = '' }) {

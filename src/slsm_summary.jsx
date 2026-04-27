@@ -17,7 +17,7 @@ function roundedMillions(value) {
   return Math.round((value / 1000000) * 10) / 10;
 }
 
-export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange }) {
+export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange, selectedSlsmName = '', onBackToSlsl = null }) {
   const [slsmName, setSlsmName] = useState('');
   const [runRequestId, setRunRequestId] = useState(0);
   const [isRevenueLoading, setIsRevenueLoading] = useState(false);
@@ -73,6 +73,14 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
   }, [forecastWorkbook]);
 
   useEffect(() => {
+    const selectedName = selectedSlsmName.trim();
+    if (!selectedName || selectedName === slsmName) return;
+
+    setSlsmName(selectedName);
+    setRunRequestId((requestId) => requestId + 1);
+  }, [selectedSlsmName]);
+
+  useEffect(() => {
     if (!trimmedSlsmName) {
       setSlsBreakdownRows([]);
       setSlsBreakdownError('');
@@ -111,7 +119,7 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
   }, [trimmedSlsmName, pipelineUploadVersion, revenueSummary]);
 
   async function loadSavedSlsmOptions() {
-    setSlsmName('');
+    if (!selectedSlsmName.trim()) setSlsmName('');
     setSlsmOptions([]);
     setOptionsError('');
     setIsLoadingOptions(true);
@@ -121,7 +129,9 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load SLSM list.');
 
-      setSlsmOptions(payload.options || []);
+      const options = payload.options || [];
+      setSlsmOptions(options);
+      if (selectedSlsmName.trim()) setSlsmName(selectedSlsmName.trim());
     } catch {
       setSlsmOptions([]);
     } finally {
@@ -130,7 +140,7 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
   }
 
   async function loadSlsmOptionsFromWorkbook(file) {
-    setSlsmName('');
+    if (!selectedSlsmName.trim()) setSlsmName('');
     setSlsmOptions([]);
     setOptionsError('');
     setRevenueSummary(null);
@@ -156,7 +166,9 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to read SLSM list.');
 
-      setSlsmOptions(payload.options || []);
+      const options = payload.options || [];
+      setSlsmOptions(options);
+      if (selectedSlsmName.trim()) setSlsmName(selectedSlsmName.trim());
       if (!payload.options?.length) setOptionsError('No SLSM values found in the forecast workbook.');
     } catch (err) {
       setOptionsError(err.message);
@@ -206,6 +218,11 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
           <path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" />
         </svg>
         <h1>SLSM Summary <span>FY 2026</span></h1>
+        {onBackToSlsl && (
+          <button className="header-back-link" type="button" onClick={onBackToSlsl}>
+            Back to SLSL
+          </button>
+        )}
       </header>
 
       <main className="container">
@@ -246,7 +263,7 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
                   {slsmOptions.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
                 <button className="primary" onClick={() => setRunRequestId((requestId) => requestId + 1)} disabled={isRevenueLoading || !trimmedSlsmName}>
-                  {isRevenueLoading ? 'Running...' : 'Run Analysis'}
+                  {isRevenueLoading ? <><span className="spinner button-spinner" aria-hidden="true" />Running...</> : 'Run Analysis'}
                 </button>
               </div>
             </section>
@@ -276,7 +293,7 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
 
               {slsBreakdownError && <p className="error">{slsBreakdownError}</p>}
               {isLoadingSlsBreakdown ? (
-                <p className="empty-state">Loading SLS breakdown...</p>
+                <LoadingState label="Loading SLS breakdown..." />
               ) : slsBreakdownRows.length === 0 ? (
                 <p className="empty-state">No SLS breakdown data is available.</p>
               ) : (
@@ -337,6 +354,15 @@ function statusClass(status) {
   if (status === 'behind') return 'red';
   if (status === 'ahead') return 'green';
   return 'muted';
+}
+
+function LoadingState({ label }) {
+  return (
+    <p className="empty-state loading-state">
+      <span className="spinner" aria-hidden="true" />
+      {label}
+    </p>
+  );
 }
 
 function formatRevenueLabel(value) {
