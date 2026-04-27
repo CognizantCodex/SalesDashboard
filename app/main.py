@@ -45,6 +45,14 @@ app.add_middleware(
 )
 
 
+def _money_label(value: float) -> str:
+    return f"${value / 1_000_000:,.1f}M"
+
+
+def _empty_money_labels(*keys: str) -> dict[str, str]:
+    return {key: "$0.0M" for key in keys}
+
+
 @app.get("/health")
 def health() -> dict[str, str | bool]:
     return {"ok": True, "agent": "sls-forecast-agent", "backend": "python"}
@@ -168,6 +176,14 @@ async def slsm_forecast_options(
             "options": options,
             "database": {"sheet": sheetName, "rowsScanned": len(rows), "sourceFilename": workbook.filename or ""},
         }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/slsl/summary/current")
+async def current_slsl_summary(currentYear: int | None = Query(None)) -> dict:
+    try:
+        return await asyncio.to_thread(build_slsl_summary, currentYear)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -557,3 +573,121 @@ async def _store_slsm_forecast_sheet(file_bytes: bytes, filename: str) -> int:
         return 0
 
     return await asyncio.to_thread(replace_slsm_revenue_forecast, headers, rows, filename)
+
+
+def build_slsl_summary(current_year: int | None = None) -> dict:
+    revenue_headers, revenue_rows, revenue_source = load_slsm_revenue_forecast()
+    revenue_table = "slsm_revenue_forecast"
+    if not revenue_rows:
+        revenue_headers, revenue_rows, revenue_source = load_revenue_forecast()
+        revenue_table = "revenue_forecast"
+
+    pipeline_headers, pipeline_rows, pipeline_source = load_slsm_pipeline_upload()
+    pipeline_table = "slsm_pipeline_upload"
+    if not pipeline_rows:
+        pipeline_headers, pipeline_rows, pipeline_source = load_pipeline_upload()
+        pipeline_table = "pipeline_upload"
+
+    revenue_col_map = {header: index for index, header in enumerate(revenue_headers) if header}
+    pipeline_col_map = {header: index for index, header in enumerate(pipeline_headers) if header}
+
+    slsm_names: set[str] = set()
+    if revenue_rows:
+        try:
+            slsm_names.update(unique_person_values(revenue_rows, revenue_col_map, "SLSM"))
+        except ValueError:
+            pass
+    if pipeline_rows:
+        try:
+            slsm_names.update(unique_person_values(pipeline_rows, pipeline_col_map, "SLSM"))
+        except ValueError:
+            pass
+
+    year = current_year
+    summary_rows = []
+    for slsm_name in sorted(slsm_names, key=lambda value: value.lower()):
+        revenue_metrics = {
+            "forecast": 0.0,
+            "target": 0.0,
+            "gap": 0.0,
+            "accounts": 0,
+            "rows": 0,
+            "labels": _empty_money_labels("forecast", "target", "gap"),
+            "status": "on-track",
+        }
+        pipeline_metrics = {
+            "pipeline": 0.0,
+            "qualified": 0.0,
+            "unqualified": 0.0,
+            "accounts": 0,
+            "rows": 0,
+            "labels": _empty_money_labels("pipeline", "qualified", "unqualified"),
+        }
+        won_metrics = {"won": 0.0, "rows": 0, "labels": _empty_money_labels("won")}
+        pending_metrics = {"pendingValidation": 0.0, "rows": 0, "labels": _empty_money_labels("pendingValidation")}
+
+        if revenue_rows:
+            try:
+                revenue_metrics = analyze_forecast_rows(revenue_rows, revenue_col_map, slsm_name, "SLSM")["metrics"]
+            except ValueError:
+                pass
+
+        if pipeline_rows:
+            try:
+                pipeline_result = analyze_pipeline_rows(pipeline_rows, pipeline_col_map, slsm_name, year, "SLSM")
+                pipeline_metrics = pipeline_result["metrics"]
+                year = pipeline_result["year"]
+            except ValueError:
+                pass
+
+            try:
+                won_result = analyze_won_lost_rows(pipeline_rows, pipeline_col_map, slsm_name, year, "SLSM")
+                won_metrics = won_result["metrics"]
+                year = won_result["year"]
+            except ValueError:
+                pass
+
+            try:
+                pending_result = analyze_pending_validation_rows(pipeline_rows, pipeline_col_map, slsm_name, year, "SLSM")
+                pending_metrics = pending_result["metrics"]
+                year = pending_result["year"]
+            except ValueError:
+                pass
+
+        realized_tcv = (won_metrics.get("won") or 0.0) + (pending_metrics.get("pendingValidation") or 0.0)
+        summary_rows.append(
+            {
+                "slsmName": slsm_name,
+                "revenue": revenue_metrics,
+                "pipeline": pipeline_metrics,
+                "realizedTcv": {
+                    "total": realized_tcv,
+                    "won": won_metrics.get("won") or 0.0,
+                    "pendingValidation": pending_metrics.get("pendingValidation") or 0.0,
+                    "rows": (won_metrics.get("rows") or 0) + (pending_metrics.get("rows") or 0),
+                    "labels": {
+                        "total": _money_label(realized_tcv),
+                        "won": won_metrics.get("labels", {}).get("won", "$0.0M"),
+                        "pendingValidation": pending_metrics.get("labels", {}).get("pendingValidation", "$0.0M"),
+                    },
+                },
+            }
+        )
+
+    return {
+        "available": bool(summary_rows),
+        "year": year or current_year,
+        "rows": summary_rows,
+        "database": {
+            "revenue": {
+                "table": revenue_table,
+                "rowsSaved": len(revenue_rows),
+                "sourceFilename": revenue_source,
+            },
+            "pipeline": {
+                "table": pipeline_table,
+                "rowsSaved": len(pipeline_rows),
+                "sourceFilename": pipeline_source,
+            },
+        },
+    }

@@ -391,6 +391,102 @@ header span {
   margin-top: 0.9rem;
 }
 
+.slsl-summary-table {
+  grid-column: 1 / -1;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.slsl-total-summary {
+  grid-template-columns: 1fr;
+}
+
+.slsl-summary-table table {
+  width: 100%;
+  min-width: 1120px;
+  max-width: none;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.slsl-summary-table thead th {
+  padding: 5px 4px;
+  font-size: 10px;
+  letter-spacing: 0.015em;
+}
+
+.slsl-summary-table th,
+.slsl-summary-table td {
+  padding: 5px 5px;
+  white-space: nowrap;
+}
+
+.slsl-summary-table th:nth-child(1),
+.slsl-summary-table td:nth-child(1) {
+  width: 220px;
+  max-width: 220px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slsl-summary-table th:nth-child(2),
+.slsl-summary-table td:nth-child(2),
+.slsl-summary-table th:nth-child(3),
+.slsl-summary-table td:nth-child(3),
+.slsl-summary-table th:nth-child(4),
+.slsl-summary-table td:nth-child(4) {
+  width: 94px;
+}
+
+.slsl-summary-table th:nth-child(5),
+.slsl-summary-table td:nth-child(5),
+.slsl-summary-table th:nth-child(8),
+.slsl-summary-table td:nth-child(8),
+.slsl-summary-table th:nth-child(9),
+.slsl-summary-table td:nth-child(9),
+.slsl-summary-table th:nth-child(10),
+.slsl-summary-table td:nth-child(10) {
+  width: 82px;
+}
+
+.slsl-summary-table th:nth-child(6),
+.slsl-summary-table td:nth-child(6) {
+  width: 100px;
+}
+
+.slsl-summary-table th:nth-child(7),
+.slsl-summary-table td:nth-child(7) {
+  width: 118px;
+}
+
+.slsl-summary-table th:nth-child(10),
+.slsl-summary-table td:nth-child(10) {
+  width: 145px;
+}
+
+.slsl-summary-table th:nth-child(n + 2),
+.slsl-summary-table td:nth-child(n + 2) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.slsl-summary-table tr.detail-row td:nth-child(1) {
+  color: #45546a;
+  font-size: 12px;
+  padding-left: 5px;
+}
+
+.slsl-summary-table tr.slsl-total-row td {
+  font-size: 12px;
+  padding: 5px 5px;
+}
+
+.slsl-summary-table tr.slsl-total-row td:first-child {
+  text-align: left;
+}
+
 .detail-filter-row {
   display: flex;
   align-items: center;
