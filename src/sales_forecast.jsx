@@ -3,9 +3,14 @@ import SalesRevenue from './sales_revenue.jsx';
 import SalesRevenueDetails from './sales_revenue_details.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
 import SalesPipelineDetails from './sales_pipeline_details.jsx';
+import SalesTcvDetails from './sales_tcv_details.jsx';
 import SalesSummary from './sales_summary.jsx';
 import SalesWonLost from './sales_won_lost.jsx';
 import SalesPendingValidation from './sales_pending_validation.jsx';
+
+function roundedMillions(value) {
+  return Math.round((value / 1000000) * 10) / 10;
+}
 
 export default function SalesForecast() {
   const [slsName, setSlsName] = useState('');
@@ -20,6 +25,16 @@ export default function SalesForecast() {
   const [pendingValidationSummary, setPendingValidationSummary] = useState(null);
   const [matchedSlsNames, setMatchedSlsNames] = useState([]);
   const [pipelineUploadVersion, setPipelineUploadVersion] = useState(0);
+  const trimmedSlsName = slsName.trim();
+  const totalTcvMillions =
+    roundedMillions(wonLostSummary?.metrics?.won || 0) +
+    roundedMillions(pendingValidationSummary?.metrics?.pendingValidation || 0);
+  const hasSummaryResult = Boolean(revenueSummary || pipelineSummary || wonLostSummary || pendingValidationSummary);
+  const hasVisibleSummary =
+    (revenueSummary?.forecast || 0) !== 0 ||
+    (pipelineSummary?.metrics?.pipeline || 0) !== 0 ||
+    totalTcvMillions !== 0;
+  const showNoDataWarning = trimmedSlsName && hasSummaryResult && !hasVisibleSummary;
 
   if (currentPage === 'revenue-details') {
     return (
@@ -37,6 +52,16 @@ export default function SalesForecast() {
     return (
       <SalesPipelineDetails
         pipelineResult={pipelineResult}
+        onBack={() => setCurrentPage('dashboard')}
+      />
+    );
+  }
+
+  if (currentPage === 'tcv-details') {
+    return (
+      <SalesTcvDetails
+        wonLostSummary={wonLostSummary}
+        pendingValidationSummary={pendingValidationSummary}
         onBack={() => setCurrentPage('dashboard')}
       />
     );
@@ -71,7 +96,8 @@ export default function SalesForecast() {
           <SalesPendingValidation slsName={slsName} uploadVersion={pipelineUploadVersion} onSummaryChange={setPendingValidationSummary} />
 
           <section className="search-area forecast-search">
-            {!slsName.trim() && <p className="sls-warning">Enter an SLS name to summarize pipeline.</p>}
+            {!trimmedSlsName && <p className="sls-warning">Enter an SLS name to summarize pipeline.</p>}
+            {showNoDataWarning && <p className="sls-warning">Data does not exist for the specified SLS</p>}
             <div className="search-row">
               <input
                 type="text"
@@ -98,6 +124,7 @@ export default function SalesForecast() {
             pendingValidationSummary={pendingValidationSummary}
             onRevenueDetailsClick={() => setCurrentPage('revenue-details')}
             onPipelineDetailsClick={() => setCurrentPage('pipeline-details')}
+            onTcvDetailsClick={() => setCurrentPage('tcv-details')}
           />
         </div>
       </main>
