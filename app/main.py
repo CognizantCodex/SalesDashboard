@@ -31,7 +31,7 @@ from .database import (
     replace_slsm_wins_lost,
     replace_wins_lost,
 )
-from .forecast_agent import SLSM_FORECAST_SHEET, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_workbook, result_to_csv, unique_person_values
 
 
 app = FastAPI(title="SLS Forecast Agent", version="1.0.0")
@@ -51,6 +51,49 @@ def _money_label(value: float) -> str:
 
 def _empty_money_labels(*keys: str) -> dict[str, str]:
     return {key: "$0.0M" for key in keys}
+
+
+def _column_index(headers: list[str], *names: str) -> int | None:
+    for name in names:
+        if name in headers:
+            return headers.index(name)
+    return None
+
+
+def _cell(row: list, index: int | None) -> object:
+    if index is None or index >= len(row):
+        return None
+    return row[index]
+
+
+def _person_index(headers: list[str], person_column: str) -> int | None:
+    if person_column == "SLSM":
+        return _column_index(headers, "SLSM", "SLSM Name", "SLS Manager")
+    return _column_index(headers, person_column)
+
+
+def _filter_rows_by_person(data_rows: list[list], headers: list[str], name: str, person_column: str) -> list[list]:
+    person_index = _person_index(headers, person_column)
+    if person_index is None:
+        return []
+
+    return [
+        row
+        for row in data_rows
+        if _matches_name_permutation(_cell(row, person_index), name)
+    ]
+
+
+def _unique_child_people(data_rows: list[list], headers: list[str], child_column: str) -> set[str]:
+    child_index = _person_index(headers, child_column)
+    if child_index is None:
+        return set()
+
+    return {
+        str(_cell(row, child_index) or "").strip()
+        for row in data_rows
+        if str(_cell(row, child_index) or "").strip()
+    }
 
 
 @app.get("/health")
@@ -184,6 +227,17 @@ async def slsm_forecast_options(
 async def current_slsl_summary(currentYear: int | None = Query(None)) -> dict:
     try:
         return await asyncio.to_thread(build_slsl_summary, currentYear)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/slsm/sls-breakdown/current")
+async def current_slsm_sls_breakdown(
+    slsmName: str = Query(...),
+    currentYear: int | None = Query(None),
+) -> dict:
+    try:
+        return await asyncio.to_thread(build_slsm_sls_breakdown, slsmName, currentYear)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -676,6 +730,122 @@ def build_slsl_summary(current_year: int | None = None) -> dict:
 
     return {
         "available": bool(summary_rows),
+        "year": year or current_year,
+        "rows": summary_rows,
+        "database": {
+            "revenue": {
+                "table": revenue_table,
+                "rowsSaved": len(revenue_rows),
+                "sourceFilename": revenue_source,
+            },
+            "pipeline": {
+                "table": pipeline_table,
+                "rowsSaved": len(pipeline_rows),
+                "sourceFilename": pipeline_source,
+            },
+        },
+    }
+
+
+def build_slsm_sls_breakdown(slsm_name: str, current_year: int | None = None) -> dict:
+    name = str(slsm_name or "").strip()
+    if not name:
+        raise ValueError("SLSM name is required.")
+
+    revenue_headers, revenue_rows, revenue_source = load_slsm_revenue_forecast()
+    revenue_table = "slsm_revenue_forecast"
+    if not revenue_rows:
+        revenue_headers, revenue_rows, revenue_source = load_revenue_forecast()
+        revenue_table = "revenue_forecast"
+
+    pipeline_headers, pipeline_rows, pipeline_source = load_slsm_pipeline_upload()
+    pipeline_table = "slsm_pipeline_upload"
+    if not pipeline_rows:
+        pipeline_headers, pipeline_rows, pipeline_source = load_pipeline_upload()
+        pipeline_table = "pipeline_upload"
+
+    slsm_revenue_rows = _filter_rows_by_person(revenue_rows, revenue_headers, name, "SLSM")
+    slsm_pipeline_rows = _filter_rows_by_person(pipeline_rows, pipeline_headers, name, "SLSM")
+    revenue_col_map = {header: index for index, header in enumerate(revenue_headers) if header}
+    pipeline_col_map = {header: index for index, header in enumerate(pipeline_headers) if header}
+
+    sls_names = _unique_child_people(slsm_revenue_rows, revenue_headers, "SLS")
+    sls_names.update(_unique_child_people(slsm_pipeline_rows, pipeline_headers, "SLS"))
+
+    year = current_year
+    summary_rows = []
+    for sls_name in sorted(sls_names, key=lambda value: value.lower()):
+        revenue_metrics = {
+            "forecast": 0.0,
+            "target": 0.0,
+            "gap": 0.0,
+            "accounts": 0,
+            "rows": 0,
+            "labels": _empty_money_labels("forecast", "target", "gap"),
+            "status": "on-track",
+        }
+        pipeline_metrics = {
+            "pipeline": 0.0,
+            "qualified": 0.0,
+            "unqualified": 0.0,
+            "accounts": 0,
+            "rows": 0,
+            "labels": _empty_money_labels("pipeline", "qualified", "unqualified"),
+        }
+        won_metrics = {"won": 0.0, "rows": 0, "labels": _empty_money_labels("won")}
+        pending_metrics = {"pendingValidation": 0.0, "rows": 0, "labels": _empty_money_labels("pendingValidation")}
+
+        if slsm_revenue_rows:
+            try:
+                revenue_metrics = analyze_forecast_rows(slsm_revenue_rows, revenue_col_map, sls_name, "SLS")["metrics"]
+            except ValueError:
+                pass
+
+        if slsm_pipeline_rows:
+            try:
+                pipeline_result = analyze_pipeline_rows(slsm_pipeline_rows, pipeline_col_map, sls_name, year, "SLS")
+                pipeline_metrics = pipeline_result["metrics"]
+                year = pipeline_result["year"]
+            except ValueError:
+                pass
+
+            try:
+                won_result = analyze_won_lost_rows(slsm_pipeline_rows, pipeline_col_map, sls_name, year, "SLS")
+                won_metrics = won_result["metrics"]
+                year = won_result["year"]
+            except ValueError:
+                pass
+
+            try:
+                pending_result = analyze_pending_validation_rows(slsm_pipeline_rows, pipeline_col_map, sls_name, year, "SLS")
+                pending_metrics = pending_result["metrics"]
+                year = pending_result["year"]
+            except ValueError:
+                pass
+
+        realized_tcv = (won_metrics.get("won") or 0.0) + (pending_metrics.get("pendingValidation") or 0.0)
+        summary_rows.append(
+            {
+                "slsName": sls_name,
+                "revenue": revenue_metrics,
+                "pipeline": pipeline_metrics,
+                "realizedTcv": {
+                    "total": realized_tcv,
+                    "won": won_metrics.get("won") or 0.0,
+                    "pendingValidation": pending_metrics.get("pendingValidation") or 0.0,
+                    "rows": (won_metrics.get("rows") or 0) + (pending_metrics.get("rows") or 0),
+                    "labels": {
+                        "total": _money_label(realized_tcv),
+                        "won": won_metrics.get("labels", {}).get("won", "$0.0M"),
+                        "pendingValidation": pending_metrics.get("labels", {}).get("pendingValidation", "$0.0M"),
+                    },
+                },
+            }
+        )
+
+    return {
+        "available": bool(summary_rows),
+        "query": name,
         "year": year or current_year,
         "rows": summary_rows,
         "database": {
