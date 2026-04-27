@@ -37,6 +37,7 @@ export default function SalesForecast() {
   const [forecastWorkbook, setForecastWorkbook] = useState(null);
   const [selectedSlsmName, setSelectedSlsmName] = useState('');
   const [slsmReturnDashboard, setSlsmReturnDashboard] = useState('');
+  const [slsReturnDashboard, setSlsReturnDashboard] = useState('');
   const trimmedSlsName = slsName.trim();
   const totalTcvMillions =
     roundedMillions(wonLostSummary?.metrics?.won || 0) +
@@ -52,6 +53,14 @@ export default function SalesForecast() {
     setActiveDashboard(dashboard);
     setCurrentPage('dashboard');
     setSlsmReturnDashboard('');
+    setSlsReturnDashboard('');
+    if (dashboard === 'slsm') {
+      setSelectedSlsmName('');
+    }
+    if (dashboard === 'sls') {
+      setSlsName('');
+      clearSlsSummaryState();
+    }
   }
 
   function handleSlsmDrilldown(slsmName) {
@@ -61,9 +70,35 @@ export default function SalesForecast() {
     setCurrentPage('dashboard');
   }
 
+  function clearSlsSummaryState() {
+    setRevenueSummary(null);
+    setRevenueResult(null);
+    setPipelineSummary(null);
+    setPipelineResult(null);
+    setWonLostSummary(null);
+    setPendingValidationSummary(null);
+    setMatchedSlsNames([]);
+  }
+
+  function handleSlsDrilldown(slsName, sourceSlsmName = '') {
+    setSlsName(slsName);
+    if (sourceSlsmName) setSelectedSlsmName(sourceSlsmName);
+    setSlsReturnDashboard('slsm');
+    clearSlsSummaryState();
+    setActiveDashboard('sls');
+    setCurrentPage('dashboard');
+    setRunRequestId((requestId) => requestId + 1);
+  }
+
   function handleSlsmBack() {
     setActiveDashboard(slsmReturnDashboard || 'slsl');
     setSlsmReturnDashboard('');
+    setCurrentPage('dashboard');
+  }
+
+  function handleSlsBack() {
+    setActiveDashboard(slsReturnDashboard || 'slsm');
+    setSlsReturnDashboard('');
     setCurrentPage('dashboard');
   }
 
@@ -75,6 +110,7 @@ export default function SalesForecast() {
           onForecastWorkbookChange={setForecastWorkbook}
           selectedSlsmName={selectedSlsmName}
           onBackToSlsl={slsmReturnDashboard === 'slsl' ? handleSlsmBack : null}
+          onSlsSelect={handleSlsDrilldown}
         />
       </DashboardShell>
     );
@@ -132,6 +168,11 @@ export default function SalesForecast() {
           <path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8" />
         </svg>
         <h1>SLS Dashboard <span>FY 2026</span></h1>
+        {slsReturnDashboard === 'slsm' && (
+          <button className="header-back-link" type="button" onClick={handleSlsBack}>
+            Back to SLSM
+          </button>
+        )}
       </header>
 
       <main className="container">

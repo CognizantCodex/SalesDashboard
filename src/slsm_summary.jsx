@@ -17,7 +17,7 @@ function roundedMillions(value) {
   return Math.round((value / 1000000) * 10) / 10;
 }
 
-export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange, selectedSlsmName = '', onBackToSlsl = null }) {
+export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange, selectedSlsmName = '', onBackToSlsl = null, onSlsSelect = null }) {
   const [slsmName, setSlsmName] = useState('');
   const [runRequestId, setRunRequestId] = useState(0);
   const [isRevenueLoading, setIsRevenueLoading] = useState(false);
@@ -315,7 +315,11 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
                   <tbody>
                     {slsBreakdownRows.map((row) => (
                       <tr className="detail-row" key={row.slsName}>
-                        <td>{row.slsName}</td>
+                        <td>
+                          <button className="table-link" type="button" onClick={() => onSlsSelect?.(row.slsName, trimmedSlsmName)}>
+                            {row.slsName}
+                          </button>
+                        </td>
                         <td>{row.revenue.labels.forecast}</td>
                         <td>{row.revenue.labels.target}</td>
                         <td className={statusClass(row.revenue.status)}>{row.revenue.labels.gap}</td>
