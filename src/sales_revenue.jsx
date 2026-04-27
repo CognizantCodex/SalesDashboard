@@ -1,8 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import UploadOption from './upload_option.jsx';
 
-const AGENT_URL = 'http://127.0.0.1:3001/api/forecast/analyze';
-const CURRENT_URL = 'http://127.0.0.1:3001/api/forecast/current';
-const METADATA_URL = 'http://127.0.0.1:3001/api/forecast/current/metadata';
+const ENTITY_CONFIG = {
+  sls: {
+    label: 'SLS',
+    formField: 'slsName',
+    agentUrl: 'http://127.0.0.1:3001/api/forecast/analyze',
+    currentUrl: 'http://127.0.0.1:3001/api/forecast/current',
+    metadataUrl: 'http://127.0.0.1:3001/api/forecast/current/metadata',
+    savedTableLabel: 'saved revenue_forecast data',
+    sheetName: 'Data'
+  },
+  slsm: {
+    label: 'SLSM',
+    formField: 'slsmName',
+    agentUrl: 'http://127.0.0.1:3001/api/slsm/forecast/analyze',
+    currentUrl: 'http://127.0.0.1:3001/api/slsm/forecast/current',
+    metadataUrl: 'http://127.0.0.1:3001/api/slsm/forecast/current/metadata',
+    savedTableLabel: 'saved slsm_revenue_forecast data',
+    sheetName: 'SL_Forecast -2026'
+  }
+};
 
 const CRC_TABLE = (() => {
   const table = [];
@@ -16,17 +34,29 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, onSummaryChange, onMatchedNamesChange, onResultChange }) {
+export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, onSummaryChange, onMatchedNamesChange, onResultChange, onWorkbookChange, externalWorkbook = null, entity = 'sls' }) {
+  const config = ENTITY_CONFIG[entity] || ENTITY_CONFIG.sls;
   const [workbook, setWorkbook] = useState(null);
   const [result, setResult] = useState(null);
   const [savedForecast, setSavedForecast] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     onLoadingChange(loading);
   }, [loading, onLoadingChange]);
+
+  useEffect(() => {
+    if (externalWorkbook === workbook) return;
+
+    setWorkbook(externalWorkbook);
+    if (externalWorkbook) setSavedForecast(null);
+    setError('');
+    setResult(null);
+    onSummaryChange(null);
+    onMatchedNamesChange([]);
+    onResultChange(null);
+  }, [externalWorkbook]);
 
   useEffect(() => {
     if (runRequestId > 0) {
@@ -44,19 +74,21 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       return undefined;
     }
 
+    if (workbook) return undefined;
+
     const timeoutId = window.setTimeout(() => {
       loadStoredForecast(trimmedName, { silent: true });
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [slsName]);
+  }, [slsName, workbook]);
 
   useEffect(() => {
     let ignore = false;
 
     async function loadSavedForecastMetadata() {
       try {
-        const response = await fetch(METADATA_URL);
+        const response = await fetch(config.metadataUrl);
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast metadata.');
 
@@ -93,7 +125,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       onSummaryChange(null);
       onMatchedNamesChange([]);
       onResultChange(null);
-      setError('Enter an SLS name before running analysis.');
+      setError('Enter an ' + config.label + ' name before running analysis.');
       return;
     }
 
@@ -101,7 +133,8 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     setError('');
 
     try {
-      const url = CURRENT_URL + '?slsName=' + encodeURIComponent(trimmedName);
+      const params = new URLSearchParams({ [config.formField]: trimmedName });
+      const url = config.currentUrl + '?' + params.toString();
       const response = await fetch(url);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast.');
@@ -141,10 +174,11 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
 
     const formData = new FormData();
     formData.append('workbook', workbook);
-    formData.append('slsName', slsName);
+    formData.append(config.formField, slsName);
+    formData.append('sheetName', config.sheetName);
 
     try {
-      const response = await fetch(AGENT_URL, {
+      const response = await fetch(config.agentUrl, {
         method: 'POST',
         body: formData
       });
@@ -155,6 +189,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       setResult(payload);
       onSummaryChange(payload.metrics);
       onMatchedNamesChange(payload.matchedSlsNames || []);
+      onResultChange(payload);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -406,21 +441,35 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     URL.revokeObjectURL(url);
   }
 
-  function handleDrop(event) {
-    event.preventDefault();
-    setIsDragging(false);
-
-    const file = event.dataTransfer.files?.[0];
-    if (!file) return;
+  function selectWorkbook(file, source = 'select') {
+    if (!file) {
+      setWorkbook(null);
+      setSavedForecast(null);
+      onWorkbookChange?.(null);
+      setError('');
+      setResult(null);
+      onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
+      return;
+    }
 
     const allowed = /\.(xlsb|xlsx|xlsm)$/i.test(file.name);
     if (!allowed) {
-      setError('Please drop a .xlsb, .xlsx, or .xlsm workbook.');
+      setWorkbook(null);
+      setSavedForecast(null);
+      onWorkbookChange?.(null);
+      setError('Please ' + (source === 'drop' ? 'drop' : 'select') + ' a .xlsb, .xlsx, or .xlsm workbook.');
+      setResult(null);
+      onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
       return;
     }
 
     setWorkbook(file);
     setSavedForecast(null);
+    onWorkbookChange?.(file);
     setError('');
     setResult(null);
     onSummaryChange(null);
@@ -428,44 +477,26 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     onResultChange(null);
   }
 
+  const uploadTitle = workbook
+    ? workbook.name
+    : savedForecast?.sourceFilename || 'Drop your revenue workbook here';
+  const uploadSubtitle = workbook
+    ? 'Revenue workbook selected - ready to analyse'
+    : savedForecast?.rowsSaved
+      ? savedForecast.rowsSaved.toLocaleString() + ' rows loaded from ' + config.savedTableLabel
+      : 'Supports .xlsb and .xlsx - processed by the Python agent';
+
   return (
     <>
-      <section
-        className={'upload-card revenue-upload' + (workbook ? ' done' : '') + (isDragging ? ' drag' : '')}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={handleDrop}
-      >
-        <label>
-          <span className="upload-kicker">Revenue</span>
-          <svg className="upload-icon" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 16V8m0 0-3 3m3-3 3 3M20 16.5A3.5 3.5 0 0 0 16.5 13H15a5 5 0 1 0-9.9 1.5" />
-          </svg>
-          <p className="upload-title">{workbook ? workbook.name : savedForecast?.sourceFilename || 'Drop your revenue workbook here'}</p>
-          <p className="upload-sub">
-            {workbook
-              ? 'Revenue workbook selected - ready to analyse'
-              : savedForecast?.rowsSaved
-                ? savedForecast.rowsSaved.toLocaleString() + ' rows loaded from saved revenue_forecast data'
-                : 'Supports .xlsb and .xlsx - processed by the Python agent'}
-          </p>
-          <input
-            type="file"
-            accept=".xlsb,.xlsx,.xlsm"
-            onChange={(event) => {
-              setWorkbook(event.target.files?.[0] || null);
-              setSavedForecast(null);
-              setError('');
-              setResult(null);
-              onMatchedNamesChange([]);
-              onResultChange(null);
-            }}
-          />
-        </label>
-      </section>
+      <UploadOption
+        className="revenue-upload"
+        label="Revenue"
+        title={uploadTitle}
+        subtitle={uploadSubtitle}
+        icon="revenue"
+        isComplete={Boolean(workbook)}
+        onFileSelect={selectWorkbook}
+      />
 
       <section className="revenue-flow">
         {error && <p className="error">{error}</p>}

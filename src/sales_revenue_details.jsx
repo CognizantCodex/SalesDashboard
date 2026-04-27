@@ -14,7 +14,7 @@ const CRC_TABLE = (() => {
 })();
 
 
-export default function SalesRevenueDetails({ revenueResult, revenueSummary, matchedSlsNames, slsName, onBack }) {
+export default function SalesRevenueDetails({ revenueResult, revenueSummary, matchedSlsNames, slsName, onBack, entityLabel = 'SLS' }) {
   const [error, setError] = useState('');
   const accountRows = useMemo(() => {
     if (!revenueResult?.accounts) return [];
@@ -36,7 +36,7 @@ function exportExcel() {
 
     const { sheetRows, merges } = buildForecastSheet(revenueResult.accounts);
     const workbook = createXlsxWorkbook(sheetRows, merges);
-    downloadBlob(workbook, (slsName || 'SLS') + '_Forecast_2026.xlsx');
+    downloadBlob(workbook, (slsName || entityLabel) + '_Forecast_2026.xlsx');
 }
 
 function buildForecastSheet(accounts) {
@@ -296,7 +296,7 @@ function downloadBlob(blob, filename) {
         {error && <p className="error">{error}</p>}
 
         {!revenueResult?.accounts?.length ? (
-          <p className="sls-warning summary-warning">Data does not exist for the specified SLS</p>
+          <p className="sls-warning summary-warning">Data does not exist for the specified {entityLabel}</p>
         ) : (
           <section className="table-wrap detail-table-wrap">
             <div className="table-header">

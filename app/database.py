@@ -12,15 +12,19 @@ SYSTEM_COLUMNS = {"id", "source_filename", "row_number"}
 PIPELINE_UPLOAD_TABLE = "pipeline_upload"
 WINS_LOST_TABLE = "wins_lost"
 PENDING_VALIDATION_TABLE = "pending_validation"
+SLSM_REVENUE_FORECAST_TABLE = "slsm_revenue_forecast"
+SLSM_PIPELINE_UPLOAD_TABLE = "slsm_pipeline_upload"
+SLSM_WINS_LOST_TABLE = "slsm_wins_lost"
+SLSM_PENDING_VALIDATION_TABLE = "slsm_pending_validation"
 
 
-def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str, table_name: str = "revenue_forecast") -> int:
     columns = _unique_column_names(headers)
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with sqlite3.connect(DATABASE_PATH) as conn:
-        conn.execute("DROP TABLE IF EXISTS revenue_forecast")
-        conn.execute(_create_table_sql(columns))
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(table_name)}")
+        conn.execute(_create_table_sql(table_name, columns))
 
         if rows:
             placeholders = ", ".join("?" for _ in range(len(columns) + 2))
@@ -32,17 +36,26 @@ def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_f
                 ]
             )
             conn.executemany(
-                f"INSERT INTO revenue_forecast ({quoted_columns}) VALUES ({placeholders})",
+                f"INSERT INTO {_quote_identifier(table_name)} ({quoted_columns}) VALUES ({placeholders})",
                 [
                     [source_filename, row_number, *[_db_value(_cell(row, index)) for index in range(len(columns))]]
                     for row_number, row in enumerate(rows, start=1)
                 ],
             )
 
-        return len(rows)
+    return len(rows)
 
 
-def replace_pipeline_upload(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+def replace_slsm_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return replace_revenue_forecast(headers, rows, source_filename, SLSM_REVENUE_FORECAST_TABLE)
+
+
+def replace_pipeline_upload(
+    headers: list[str],
+    rows: list[list[Any]],
+    source_filename: str,
+    table_name: str = PIPELINE_UPLOAD_TABLE,
+) -> int:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload_headers = _unique_column_names(headers)
     payload_rows = [
@@ -51,11 +64,11 @@ def replace_pipeline_upload(headers: list[str], rows: list[list[Any]], source_fi
     ]
 
     with sqlite3.connect(DATABASE_PATH) as conn:
-        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(PIPELINE_UPLOAD_TABLE)}")
-        conn.execute(_create_pipeline_upload_table_sql())
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(table_name)}")
+        conn.execute(_create_pipeline_upload_table_sql(table_name))
         conn.execute(
             f"""
-            INSERT INTO {_quote_identifier(PIPELINE_UPLOAD_TABLE)}
+            INSERT INTO {_quote_identifier(table_name)}
                 (id, source_filename, rows_saved, headers_json, rows_json)
             VALUES (?, ?, ?, ?, ?)
             """,
@@ -71,39 +84,47 @@ def replace_pipeline_upload(headers: list[str], rows: list[list[Any]], source_fi
     return len(rows)
 
 
-def load_pipeline_upload_metadata() -> dict[str, Any]:
+def replace_slsm_pipeline_upload(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return replace_pipeline_upload(headers, rows, source_filename, SLSM_PIPELINE_UPLOAD_TABLE)
+
+
+def load_pipeline_upload_metadata(table_name: str = PIPELINE_UPLOAD_TABLE) -> dict[str, Any]:
     if not DATABASE_PATH.exists():
-        return {"available": False, "table": PIPELINE_UPLOAD_TABLE, "rowsSaved": 0, "sourceFilename": None}
+        return {"available": False, "table": table_name, "rowsSaved": 0, "sourceFilename": None}
 
     with sqlite3.connect(DATABASE_PATH) as conn:
-        if not _table_exists(conn, PIPELINE_UPLOAD_TABLE):
-            return {"available": False, "table": PIPELINE_UPLOAD_TABLE, "rowsSaved": 0, "sourceFilename": None}
+        if not _table_exists(conn, table_name):
+            return {"available": False, "table": table_name, "rowsSaved": 0, "sourceFilename": None}
 
         row = conn.execute(
-            f"SELECT source_filename, rows_saved FROM {_quote_identifier(PIPELINE_UPLOAD_TABLE)} WHERE id = 1"
+            f"SELECT source_filename, rows_saved FROM {_quote_identifier(table_name)} WHERE id = 1"
         ).fetchone()
 
     return {
         "available": bool(row and row[1] > 0),
-        "table": PIPELINE_UPLOAD_TABLE,
+        "table": table_name,
         "rowsSaved": row[1] if row else 0,
         "databaseRows": 1 if row else 0,
         "sourceFilename": row[0] if row else None,
     }
 
 
-def load_pipeline_upload() -> tuple[list[str], list[list[Any]], str | None]:
+def load_slsm_pipeline_upload_metadata() -> dict[str, Any]:
+    return load_pipeline_upload_metadata(SLSM_PIPELINE_UPLOAD_TABLE)
+
+
+def load_pipeline_upload(table_name: str = PIPELINE_UPLOAD_TABLE) -> tuple[list[str], list[list[Any]], str | None]:
     if not DATABASE_PATH.exists():
         return [], [], None
 
     with sqlite3.connect(DATABASE_PATH) as conn:
-        if not _table_exists(conn, PIPELINE_UPLOAD_TABLE):
+        if not _table_exists(conn, table_name):
             return [], [], None
 
         row = conn.execute(
             f"""
             SELECT source_filename, headers_json, rows_json
-            FROM {_quote_identifier(PIPELINE_UPLOAD_TABLE)}
+            FROM {_quote_identifier(table_name)}
             WHERE id = 1
             """
         ).fetchone()
@@ -113,6 +134,10 @@ def load_pipeline_upload() -> tuple[list[str], list[list[Any]], str | None]:
 
     source_filename, headers_json, rows_json = row
     return json.loads(headers_json or "[]"), json.loads(rows_json or "[]"), source_filename
+
+
+def load_slsm_pipeline_upload() -> tuple[list[str], list[list[Any]], str | None]:
+    return load_pipeline_upload(SLSM_PIPELINE_UPLOAD_TABLE)
 
 
 def replace_wins_lost(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
@@ -127,6 +152,18 @@ def load_wins_lost() -> tuple[list[str], list[list[Any]], str | None]:
     return _load_single_row_payload(WINS_LOST_TABLE)
 
 
+def replace_slsm_wins_lost(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return _replace_single_row_payload(SLSM_WINS_LOST_TABLE, headers, rows, source_filename)
+
+
+def load_slsm_wins_lost_metadata() -> dict[str, Any]:
+    return _load_single_row_payload_metadata(SLSM_WINS_LOST_TABLE)
+
+
+def load_slsm_wins_lost() -> tuple[list[str], list[list[Any]], str | None]:
+    return _load_single_row_payload(SLSM_WINS_LOST_TABLE)
+
+
 def replace_pending_validation(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
     return _replace_single_row_payload(PENDING_VALIDATION_TABLE, headers, rows, source_filename)
 
@@ -139,48 +176,68 @@ def load_pending_validation() -> tuple[list[str], list[list[Any]], str | None]:
     return _load_single_row_payload(PENDING_VALIDATION_TABLE)
 
 
-def load_revenue_forecast_metadata() -> dict[str, Any]:
+def replace_slsm_pending_validation(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return _replace_single_row_payload(SLSM_PENDING_VALIDATION_TABLE, headers, rows, source_filename)
+
+
+def load_slsm_pending_validation_metadata() -> dict[str, Any]:
+    return _load_single_row_payload_metadata(SLSM_PENDING_VALIDATION_TABLE)
+
+
+def load_slsm_pending_validation() -> tuple[list[str], list[list[Any]], str | None]:
+    return _load_single_row_payload(SLSM_PENDING_VALIDATION_TABLE)
+
+
+def load_revenue_forecast_metadata(table_name: str = "revenue_forecast") -> dict[str, Any]:
     if not DATABASE_PATH.exists():
-        return {"available": False, "table": "revenue_forecast", "rowsSaved": 0, "sourceFilename": None}
+        return {"available": False, "table": table_name, "rowsSaved": 0, "sourceFilename": None}
 
     with sqlite3.connect(DATABASE_PATH) as conn:
-        if not _table_exists(conn, "revenue_forecast"):
-            return {"available": False, "table": "revenue_forecast", "rowsSaved": 0, "sourceFilename": None}
+        if not _table_exists(conn, table_name):
+            return {"available": False, "table": table_name, "rowsSaved": 0, "sourceFilename": None}
 
-        rows_saved = conn.execute("SELECT COUNT(*) FROM revenue_forecast").fetchone()[0]
+        rows_saved = conn.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table_name)}").fetchone()[0]
         source_row = conn.execute(
-            "SELECT source_filename FROM revenue_forecast ORDER BY row_number LIMIT 1"
+            f"SELECT source_filename FROM {_quote_identifier(table_name)} ORDER BY row_number LIMIT 1"
         ).fetchone()
 
     return {
         "available": rows_saved > 0,
-        "table": "revenue_forecast",
+        "table": table_name,
         "rowsSaved": rows_saved,
         "sourceFilename": source_row[0] if source_row else None,
     }
 
 
-def load_revenue_forecast() -> tuple[list[str], list[list[Any]], str | None]:
+def load_slsm_revenue_forecast_metadata() -> dict[str, Any]:
+    return load_revenue_forecast_metadata(SLSM_REVENUE_FORECAST_TABLE)
+
+
+def load_revenue_forecast(table_name: str = "revenue_forecast") -> tuple[list[str], list[list[Any]], str | None]:
     if not DATABASE_PATH.exists():
         return [], [], None
 
     with sqlite3.connect(DATABASE_PATH) as conn:
-        if not _table_exists(conn, "revenue_forecast"):
+        if not _table_exists(conn, table_name):
             return [], [], None
 
-        table_info = conn.execute("PRAGMA table_info(revenue_forecast)").fetchall()
+        table_info = conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})").fetchall()
         headers = [row[1] for row in table_info if row[1] not in SYSTEM_COLUMNS]
         if not headers:
             return [], [], None
 
         quoted_headers = ", ".join(_quote_identifier(header) for header in headers)
         records = conn.execute(
-            f"SELECT source_filename, {quoted_headers} FROM revenue_forecast ORDER BY row_number"
+            f"SELECT source_filename, {quoted_headers} FROM {_quote_identifier(table_name)} ORDER BY row_number"
         ).fetchall()
 
     source_filename = records[0][0] if records else None
     rows = [list(record[1:]) for record in records]
     return headers, rows, source_filename
+
+
+def load_slsm_revenue_forecast() -> tuple[list[str], list[list[Any]], str | None]:
+    return load_revenue_forecast(SLSM_REVENUE_FORECAST_TABLE)
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -276,9 +333,9 @@ def _create_single_row_payload_table_sql(table_name: str) -> str:
             """
 
 
-def _create_pipeline_upload_table_sql() -> str:
+def _create_pipeline_upload_table_sql(table_name: str = PIPELINE_UPLOAD_TABLE) -> str:
     return f"""
-            CREATE TABLE {_quote_identifier(PIPELINE_UPLOAD_TABLE)} (
+            CREATE TABLE {_quote_identifier(table_name)} (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 source_filename TEXT,
                 rows_saved INTEGER NOT NULL,
