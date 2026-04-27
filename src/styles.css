@@ -318,6 +318,31 @@ header span {
   margin-top: 0.9rem;
 }
 
+.detail-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.75rem 0 0;
+}
+
+.detail-filter-row label {
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.detail-filter-row select {
+  min-width: 190px;
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
 .summary-group h2 {
   color: var(--brand);
   font-size: 12.5px;

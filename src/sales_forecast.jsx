@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import SalesRevenue from './sales_revenue.jsx';
 import SalesRevenueDetails from './sales_revenue_details.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
+import SalesPipelineDetails from './sales_pipeline_details.jsx';
 import SalesSummary from './sales_summary.jsx';
 import SalesWonLost from './sales_won_lost.jsx';
 import SalesPendingValidation from './sales_pending_validation.jsx';
@@ -14,6 +15,7 @@ export default function SalesForecast() {
   const [revenueResult, setRevenueResult] = useState(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [pipelineSummary, setPipelineSummary] = useState(null);
+  const [pipelineResult, setPipelineResult] = useState(null);
   const [wonLostSummary, setWonLostSummary] = useState(null);
   const [pendingValidationSummary, setPendingValidationSummary] = useState(null);
   const [matchedSlsNames, setMatchedSlsNames] = useState([]);
@@ -26,6 +28,15 @@ export default function SalesForecast() {
         revenueSummary={revenueSummary}
         matchedSlsNames={matchedSlsNames}
         slsName={slsName}
+        onBack={() => setCurrentPage('dashboard')}
+      />
+    );
+  }
+
+  if (currentPage === 'pipeline-details') {
+    return (
+      <SalesPipelineDetails
+        pipelineResult={pipelineResult}
         onBack={() => setCurrentPage('dashboard')}
       />
     );
@@ -54,6 +65,7 @@ export default function SalesForecast() {
             slsName={slsName}
             onSummaryChange={setPipelineSummary}
             onUploadChange={() => setPipelineUploadVersion((version) => version + 1)}
+            onResultChange={setPipelineResult}
           />
           <SalesWonLost slsName={slsName} uploadVersion={pipelineUploadVersion} onSummaryChange={setWonLostSummary} />
           <SalesPendingValidation slsName={slsName} uploadVersion={pipelineUploadVersion} onSummaryChange={setPendingValidationSummary} />
@@ -85,6 +97,7 @@ export default function SalesForecast() {
             wonLostSummary={wonLostSummary}
             pendingValidationSummary={pendingValidationSummary}
             onRevenueDetailsClick={() => setCurrentPage('revenue-details')}
+            onPipelineDetailsClick={() => setCurrentPage('pipeline-details')}
           />
         </div>
       </main>
