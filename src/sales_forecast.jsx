@@ -8,6 +8,7 @@ import SalesSummary from './sales_summary.jsx';
 import SalesWonLost from './sales_won_lost.jsx';
 import SalesPendingValidation from './sales_pending_validation.jsx';
 import SlsmSummary from './slsm_summary.jsx';
+import SlslSummary from './slsl_summary.jsx';
 
 const NAV_ITEMS = [
   { id: 'slsl', label: 'SLSL' },
@@ -61,7 +62,7 @@ export default function SalesForecast() {
   if (activeDashboard === 'slsl') {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
-        <SlslPlaceholder />
+        <SlslSummary forecastWorkbook={forecastWorkbook} onForecastWorkbookChange={setForecastWorkbook} />
       </DashboardShell>
     );
   }
@@ -190,21 +191,5 @@ function DashboardShell({ activeDashboard, onDashboardChange, children }) {
       </aside>
       <div className="app-content">{children}</div>
     </div>
-  );
-}
-
-function SlslPlaceholder() {
-  return (
-    <>
-      <header>
-        <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 6h16M4 12h12M4 18h8" />
-        </svg>
-        <h1>SLSL Summary <span>FY 2026</span></h1>
-      </header>
-      <main className="container">
-        <section className="empty-panel">No SLSL data loaded.</section>
-      </main>
-    </>
   );
 }
