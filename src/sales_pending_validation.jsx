@@ -1,13 +1,14 @@
 import { useEffect } from 'react';
+import { apiUrl } from './api.js';
 
 const ENTITY_CONFIG = {
   sls: {
     formField: 'slsName',
-    currentUrl: 'http://127.0.0.1:3001/api/pending-validation/summary/current'
+    currentUrl: apiUrl('/api/pending-validation/summary/current')
   },
   slsm: {
     formField: 'slsmName',
-    currentUrl: 'http://127.0.0.1:3001/api/slsm/pending-validation/summary/current'
+    currentUrl: apiUrl('/api/slsm/pending-validation/summary/current')
   }
 };
 

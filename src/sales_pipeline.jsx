@@ -1,21 +1,22 @@
 import React, { useEffect, useState } from 'react';
+import { apiUrl } from './api.js';
 import UploadOption from './upload_option.jsx';
 
 const ENTITY_CONFIG = {
   sls: {
     formField: 'slsName',
-    summaryUrl: 'http://127.0.0.1:3001/api/pipeline/summary',
-    currentUrl: 'http://127.0.0.1:3001/api/pipeline/summary/current',
-    uploadUrl: 'http://127.0.0.1:3001/api/pipeline/upload',
-    metadataUrl: 'http://127.0.0.1:3001/api/pipeline/upload/metadata',
+    summaryUrl: apiUrl('/api/pipeline/summary'),
+    currentUrl: apiUrl('/api/pipeline/summary/current'),
+    uploadUrl: apiUrl('/api/pipeline/upload'),
+    metadataUrl: apiUrl('/api/pipeline/upload/metadata'),
     savedTableLabel: 'pipeline_upload data'
   },
   slsm: {
     formField: 'slsmName',
-    summaryUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/summary',
-    currentUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/summary/current',
-    uploadUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/upload',
-    metadataUrl: 'http://127.0.0.1:3001/api/slsm/pipeline/upload/metadata',
+    summaryUrl: apiUrl('/api/slsm/pipeline/summary'),
+    currentUrl: apiUrl('/api/slsm/pipeline/summary/current'),
+    uploadUrl: apiUrl('/api/slsm/pipeline/upload'),
+    metadataUrl: apiUrl('/api/slsm/pipeline/upload/metadata'),
     savedTableLabel: 'slsm_pipeline_upload data'
   }
 };

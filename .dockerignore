@@ -1,0 +1,17 @@
+.git
+.DS_Store
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+coverage
+node_modules
+dist
+sales_dashboard.db
+*.db
+tests
+Sales Dashboard
+npm-debug.log
+Dockerfile*
+docker-compose*.yml

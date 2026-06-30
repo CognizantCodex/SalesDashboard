@@ -34,6 +34,77 @@ The frontend runs at:
 http://127.0.0.1:5174
 ```
 
+## Docker Deployment
+
+Docker runs the app as two containers:
+
+- `backend`: FastAPI on port `3001` inside the Docker network
+- `frontend`: Nginx serving the React production build on port `8090`
+
+If Docker is not installed yet, run the helper script for your laptop.
+
+macOS or Linux:
+
+```bash
+./scripts/check-install-docker.sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-install-docker.ps1
+```
+
+From the project folder, run:
+
+```bash
+docker compose up --build
+```
+
+Open the app at:
+
+```text
+http://localhost:8090
+```
+
+Swagger is available through the same deployed frontend host:
+
+```text
+http://localhost:8090/docs
+```
+
+To run it in the background:
+
+```bash
+docker compose up --build -d
+```
+
+If port `8090` is already being used on the host, choose another port:
+
+```bash
+FRONTEND_PORT=8091 docker compose up --build -d
+```
+
+To stop it:
+
+```bash
+docker compose down
+```
+
+Uploaded workbook data is stored in the Docker volume `sales-dashboard-data`. `docker compose down` keeps that data. To remove uploaded data too, run:
+
+```bash
+docker compose down -v
+```
+
+To let other users access the app, deploy these containers on an internal VM/server or keep Docker running on your laptop and share:
+
+```text
+http://<your-laptop-or-server-ip>:8090
+```
+
+Your network/VPN and firewall must allow inbound access to port `8090`.
+
 ## React call
 
 Post the workbook as `multipart/form-data`:
@@ -43,7 +114,7 @@ const formData = new FormData();
 formData.append('workbook', file);
 formData.append('slsName', 'Saxena, Gaurav');
 
-const response = await fetch('http://127.0.0.1:3001/api/forecast/analyze', {
+const response = await fetch('/api/forecast/analyze', {
   method: 'POST',
   body: formData
 });

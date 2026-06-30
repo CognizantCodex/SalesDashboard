@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 
-DATABASE_PATH = Path(__file__).resolve().parent.parent / "sales_dashboard.db"
+DATABASE_PATH = Path(
+    os.environ.get("SALES_DASHBOARD_DB_PATH", Path(__file__).resolve().parent.parent / "sales_dashboard.db")
+)
 SYSTEM_COLUMNS = {"id", "source_filename", "row_number"}
 PIPELINE_UPLOAD_TABLE = "pipeline_upload"
 WINS_LOST_TABLE = "wins_lost"

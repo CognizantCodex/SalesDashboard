@@ -1,13 +1,14 @@
 import { useEffect } from 'react';
+import { apiUrl } from './api.js';
 
 const ENTITY_CONFIG = {
   sls: {
     formField: 'slsName',
-    currentUrl: 'http://127.0.0.1:3001/api/won-lost/summary/current'
+    currentUrl: apiUrl('/api/won-lost/summary/current')
   },
   slsm: {
     formField: 'slsmName',
-    currentUrl: 'http://127.0.0.1:3001/api/slsm/won-lost/summary/current'
+    currentUrl: apiUrl('/api/slsm/won-lost/summary/current')
   }
 };
 

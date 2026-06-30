@@ -1,22 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { apiUrl } from './api.js';
 import UploadOption from './upload_option.jsx';
 
 const ENTITY_CONFIG = {
   sls: {
     label: 'SLS',
     formField: 'slsName',
-    agentUrl: 'http://127.0.0.1:3001/api/forecast/analyze',
-    currentUrl: 'http://127.0.0.1:3001/api/forecast/current',
-    metadataUrl: 'http://127.0.0.1:3001/api/forecast/current/metadata',
+    agentUrl: apiUrl('/api/forecast/analyze'),
+    currentUrl: apiUrl('/api/forecast/current'),
+    metadataUrl: apiUrl('/api/forecast/current/metadata'),
     savedTableLabel: 'saved revenue_forecast data',
     sheetName: 'Data'
   },
   slsm: {
     label: 'SLSM',
     formField: 'slsmName',
-    agentUrl: 'http://127.0.0.1:3001/api/slsm/forecast/analyze',
-    currentUrl: 'http://127.0.0.1:3001/api/slsm/forecast/current',
-    metadataUrl: 'http://127.0.0.1:3001/api/slsm/forecast/current/metadata',
+    agentUrl: apiUrl('/api/slsm/forecast/analyze'),
+    currentUrl: apiUrl('/api/slsm/forecast/current'),
+    metadataUrl: apiUrl('/api/slsm/forecast/current/metadata'),
     savedTableLabel: 'saved slsm_revenue_forecast data',
     sheetName: 'SL_Forecast -2026'
   }

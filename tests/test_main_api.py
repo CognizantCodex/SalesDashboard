@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app.forecast_agent import analyze_pipeline_rows
 
 
 client = TestClient(main.app)
@@ -241,6 +242,25 @@ def test_current_pipeline_tcv_endpoints(patched_storage, patched_analyzers):
         response = client.get(path, params={**params, "currentYear": 2026})
         assert response.status_code == 200
         assert response.json()["database"]["table"] == table
+
+
+def test_pipeline_accepts_group_deal_type_header_variant():
+    headers = [
+        "SLS",
+        "Grouped Sales Stage",
+        "EDC Year",
+        "Net TCV Share",
+        "Financial Ultimate Parent Account",
+        "Practice Area",
+        "Group Deal Type",
+    ]
+    rows = [["Seller A", "Qualified", 2026, 1_000_000, "Account 1", "Cloud", "New"]]
+    col_map = {header: index for index, header in enumerate(headers)}
+
+    result = analyze_pipeline_rows(rows, col_map, "Seller A", 2026)
+
+    assert result["metrics"]["pipeline"] == 1_000_000
+    assert result["rows"][0]["dealType"] == "New"
 
 
 def test_value_errors_are_returned_as_400(patched_storage, monkeypatch):

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { apiUrl } from './api.js';
 import UploadOption from './upload_option.jsx';
 
 const WORKBOOK_PATTERN = /\.(xlsb|xlsx|xlsm)$/i;
-const REVENUE_METADATA_URL = 'http://127.0.0.1:3001/api/forecast/current/metadata';
-const PIPELINE_METADATA_URL = 'http://127.0.0.1:3001/api/pipeline/upload/metadata';
-const SLSL_SUMMARY_URL = 'http://127.0.0.1:3001/api/slsl/summary/current';
+const REVENUE_METADATA_URL = apiUrl('/api/forecast/current/metadata');
+const PIPELINE_METADATA_URL = apiUrl('/api/pipeline/upload/metadata');
+const SLSL_SUMMARY_URL = apiUrl('/api/slsl/summary/current');
 
 export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange, onSlsmSelect }) {
   const [pipelineWorkbook, setPipelineWorkbook] = useState(null);

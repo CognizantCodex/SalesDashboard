@@ -31,6 +31,7 @@ PIPELINE_EXCLUDED_SUB_STATUSES = {"negotiation"}
 WON_LOST_STAGES = {"Won", "Lost"}
 PENDING_VALIDATION_STATUS = "Pending Validation"
 SLSM_FORECAST_SHEET = "SL_Forecast -2026"
+DEAL_TYPE_COLUMNS = ("Grouped Deal Type", "Group Deal Type", "Deal Type")
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -38,6 +39,10 @@ def _get_column(col_map: dict[str, int], *names: str) -> int | None:
         if name in col_map:
             return col_map[name]
     return None
+
+
+def _get_deal_type_column(col_map: dict[str, int]) -> int | None:
+    return _get_column(col_map, *DEAL_TYPE_COLUMNS)
 
 
 def _person_column_candidates(person_column: str) -> tuple[str, ...]:
@@ -286,7 +291,7 @@ def analyze_pipeline_rows(
     )
     account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
     practice_column = _get_column(col_map, "Practice Area", "Practice")
-    deal_type_column = _get_column(col_map, "Grouped Deal Type", "Deal Type")
+    deal_type_column = _get_deal_type_column(col_map)
     if amount_column is None:
         missing.append("Net TCV Share or CY $")
     if account_column is None:
@@ -294,7 +299,7 @@ def analyze_pipeline_rows(
     if practice_column is None:
         missing.append("Practice Area or Practice")
     if deal_type_column is None:
-        missing.append("Grouped Deal Type or Deal Type")
+        missing.append("Grouped Deal Type, Group Deal Type, or Deal Type")
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
@@ -446,7 +451,7 @@ def analyze_won_lost_rows(
     amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
     account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
     practice_column = _get_column(col_map, "Practice Area", "Practice")
-    deal_type_column = _get_column(col_map, "Grouped Deal Type", "Deal Type")
+    deal_type_column = _get_deal_type_column(col_map)
     if amount_column is None:
         missing.append("Net TCV Share")
     if account_column is None:
@@ -548,7 +553,7 @@ def analyze_pending_validation_rows(
     amount_column = _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)")
     account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
     practice_column = _get_column(col_map, "Practice Area", "Practice")
-    deal_type_column = _get_column(col_map, "Grouped Deal Type", "Deal Type")
+    deal_type_column = _get_deal_type_column(col_map)
     if amount_column is None:
         missing.append("Net TCV Share")
     if account_column is None:

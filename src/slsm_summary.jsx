@@ -7,10 +7,11 @@ import SalesTcvDetails from './sales_tcv_details.jsx';
 import SalesSummary from './sales_summary.jsx';
 import SalesWonLost from './sales_won_lost.jsx';
 import SalesPendingValidation from './sales_pending_validation.jsx';
+import { apiUrl } from './api.js';
 
-const SLSM_OPTIONS_URL = 'http://127.0.0.1:3001/api/slsm/forecast/options';
-const SLSM_OPTIONS_CURRENT_URL = 'http://127.0.0.1:3001/api/slsm/forecast/options/current';
-const SLS_BREAKDOWN_URL = 'http://127.0.0.1:3001/api/slsm/sls-breakdown/current';
+const SLSM_OPTIONS_URL = apiUrl('/api/slsm/forecast/options');
+const SLSM_OPTIONS_CURRENT_URL = apiUrl('/api/slsm/forecast/options/current');
+const SLS_BREAKDOWN_URL = apiUrl('/api/slsm/sls-breakdown/current');
 const SLSM_FORECAST_SHEET = 'SL_Forecast -2026';
 
 function roundedMillions(value) {
