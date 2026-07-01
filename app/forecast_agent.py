@@ -32,6 +32,8 @@ WON_LOST_STAGES = {"Won", "Lost"}
 PENDING_VALIDATION_STATUS = "Pending Validation"
 SLSM_FORECAST_SHEET = "SL_Forecast -2026"
 DEAL_TYPE_COLUMNS = ("Grouped Deal Type", "Group Deal Type", "Deal Type")
+TARGETS_SHEET = "SLM-SLS-Pivot"
+TARGET_TOTAL_LABEL = "Grand Total"
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -97,6 +99,12 @@ def _money_label(value: float) -> str:
 
 
 def _pipeline_money_label(value: float) -> str:
+    return f"${value / 1_000_000:,.1f}M"
+
+
+def _target_value_label(header: str, value: float) -> str:
+    if "OM %" in header.upper():
+        return f"{value:.1%}"
     return f"${value / 1_000_000:,.1f}M"
 
 
@@ -705,6 +713,144 @@ def parse_workbook(file_bytes: bytes, filename: str, sheet_name: str = "Data") -
     return headers, values[1:], col_map
 
 
+def parse_target_pivot(file_bytes: bytes, filename: str, sheet_name: str = TARGETS_SHEET) -> dict[str, Any]:
+    values = _read_sheet(file_bytes, filename, sheet_name)
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(values)
+            if str(_cell(row, 0) or "").strip().lower() == "row labels"
+        ),
+        None,
+    )
+    if header_index is None:
+        raise ValueError('Missing "Row Labels" column in SLM-SLS-Pivot sheet.')
+
+    headers = [
+        str(header).strip() if header is not None and str(header).strip() else f"Column {index + 1}"
+        for index, header in enumerate(values[header_index])
+    ]
+    metrics = headers[1:]
+    if not metrics:
+        raise ValueError("No target metric columns found in SLM-SLS-Pivot sheet.")
+
+    sls_rows: list[dict[str, Any]] = []
+    account_rows: list[dict[str, Any]] = []
+    current_sls: dict[str, Any] | None = None
+    current_group: dict[str, Any] | None = None
+    current_account_rows: list[dict[str, Any]] = []
+    fallback_account_rows: list[dict[str, Any]] = []
+
+    def row_metrics(row: list[Any]) -> dict[str, float]:
+        return {
+            metric: _to_number(_cell(row, index + 1))
+            for index, metric in enumerate(metrics)
+        }
+
+    def with_labels(metrics_payload: dict[str, float]) -> dict[str, Any]:
+        return {
+            "metrics": metrics_payload,
+            "labels": {
+                metric: _target_value_label(metric, value)
+                for metric, value in metrics_payload.items()
+            },
+        }
+
+    def group_fallback_row() -> dict[str, Any] | None:
+        if current_sls is None or current_group is None:
+            return None
+        return {
+            "rowNumber": current_group["rowNumber"],
+            "slsName": current_sls["slsName"],
+            "accountName": current_group["groupName"],
+            "groupName": current_group["groupName"],
+            **with_labels(current_group["metrics"]),
+        }
+
+    def finalize_current_group() -> None:
+        nonlocal current_group, current_account_rows
+        if current_group is None:
+            return
+        if current_account_rows:
+            account_rows.extend(current_account_rows)
+        else:
+            fallback = group_fallback_row()
+            if fallback is not None:
+                fallback_account_rows.append(fallback)
+        current_group = None
+        current_account_rows = []
+
+    def finalize_current_sls() -> None:
+        finalize_current_group()
+        if current_sls is not None and not _has_account_rows_for_sls(account_rows, current_sls["slsName"]):
+            if fallback_account_rows:
+                account_rows.extend(fallback_account_rows)
+            else:
+                account_rows.append(
+                    {
+                        "rowNumber": current_sls["rowNumber"],
+                        "slsName": current_sls["slsName"],
+                        "accountName": "Total",
+                        "groupName": "",
+                        **with_labels(current_sls["metrics"]),
+                    }
+                )
+        fallback_account_rows.clear()
+
+    for row_number, row in enumerate(values[header_index + 1 :], start=header_index + 2):
+        label = str(_cell(row, 0) or "").strip()
+        if not label:
+            continue
+        if label.lower() == TARGET_TOTAL_LABEL.lower():
+            break
+
+        metric_values = row_metrics(row)
+        if _is_target_account_group_label(label) and current_sls is not None:
+            finalize_current_group()
+            current_group = {
+                "rowNumber": row_number,
+                "groupName": label,
+                "metrics": metric_values,
+            }
+            continue
+
+        if _is_target_account_label(label) and current_sls is not None:
+            parent_group = current_group["groupName"] if current_group else ""
+            account = (
+                {
+                    "rowNumber": row_number,
+                    "slsName": current_sls["slsName"],
+                    "accountName": _target_account_display_name(label),
+                    "groupName": parent_group,
+                    **with_labels(metric_values),
+                }
+            )
+            if current_group is not None:
+                current_account_rows.append(account)
+            else:
+                account_rows.append(account)
+            continue
+
+        finalize_current_sls()
+        current_group = None
+        current_sls = {
+            "rowNumber": row_number,
+            "slsName": label,
+            **with_labels(metric_values),
+        }
+        sls_rows.append(current_sls)
+
+    finalize_current_sls()
+    account_rows = _target_accounts_from_data_sheet(file_bytes, filename, metrics) or account_rows
+
+    return {
+        "sheetName": sheet_name,
+        "metrics": metrics,
+        "slsRows": sls_rows,
+        "accountRows": account_rows,
+    }
+
+
 def analyze_workbook(file_bytes: bytes, filename: str, sls_name: str, sheet_name: str = "Data") -> dict[str, Any]:
     _headers, rows, col_map = parse_workbook(file_bytes, filename, sheet_name)
     return analyze_forecast_rows(rows, col_map, sls_name)
@@ -758,6 +904,104 @@ def _read_xlsb(file_bytes: bytes, sheet_name: str) -> list[list[Any]]:
 
             with workbook.get_sheet(sheet_name) as sheet:
                 return [[cell.v for cell in row] for row in sheet.rows()]
+
+
+def _is_target_account_group_label(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(re.match(r"^S\d+(?:\.\d+)?\s*[-.]", text, re.IGNORECASE))
+
+
+def _is_target_account_label(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(re.match(r"^\d{4,}\s*-", text))
+
+
+def _has_account_rows_for_sls(rows: list[dict[str, Any]], sls_name: str) -> bool:
+    return any(row.get("slsName") == sls_name for row in rows)
+
+
+def _target_account_display_name(value: str) -> str:
+    text = str(value or "").strip()
+    return re.sub(r"^\d+(?:\.\d+)?\s*-\s*", "", text).strip() or text
+
+
+def _target_accounts_from_data_sheet(file_bytes: bytes, filename: str, metrics: list[str]) -> list[dict[str, Any]]:
+    try:
+        values = _read_sheet(file_bytes, filename, "Data")
+    except ValueError:
+        return []
+
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(values)
+            if "SLS" in {str(cell or "").strip() for cell in row}
+            and "Parent Name" in {str(cell or "").strip() for cell in row}
+        ),
+        None,
+    )
+    if header_index is None:
+        return []
+
+    headers = [str(header or "").strip() for header in values[header_index]]
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    required = ["SLS", "Parent Name", "SBU1"]
+    if any(column not in col_map for column in required):
+        return []
+
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row_number, row in enumerate(values[header_index + 1 :], start=header_index + 2):
+        sls_name = str(_cell(row, col_map["SLS"]) or "").strip()
+        account_name = _target_account_display_name(str(_cell(row, col_map["Parent Name"]) or "").strip())
+        group_name = str(_cell(row, col_map["SBU1"]) or "").strip()
+        if not sls_name or not account_name:
+            continue
+
+        key = (sls_name, group_name, account_name)
+        record = grouped.setdefault(
+            key,
+            {
+                "rowNumber": row_number,
+                "slsName": sls_name,
+                "accountName": account_name,
+                "groupName": group_name,
+                "metrics": {metric: 0.0 for metric in metrics},
+                "_rev_for_om": {},
+                "_om_for_om": {},
+            },
+        )
+        record["rowNumber"] = min(record["rowNumber"], row_number)
+
+        for metric in metrics:
+            if metric.startswith("OM %-"):
+                suffix = metric.replace("OM %-", "", 1)
+                rev_header = f"Rev-{suffix}"
+                om_header = f"OM-{suffix}"
+                rev_index = col_map.get(rev_header)
+                om_index = col_map.get(om_header)
+                record["_rev_for_om"][metric] = record["_rev_for_om"].get(metric, 0.0) + _to_number(_cell(row, rev_index) if rev_index is not None else None)
+                record["_om_for_om"][metric] = record["_om_for_om"].get(metric, 0.0) + _to_number(_cell(row, om_index) if om_index is not None else None)
+                continue
+
+            data_header = metric
+            if data_header in col_map:
+                record["metrics"][metric] += _to_number(_cell(row, col_map[data_header]))
+
+    account_rows: list[dict[str, Any]] = []
+    for record in grouped.values():
+        for metric, revenue in record.pop("_rev_for_om").items():
+            om_amount = record["_om_for_om"].get(metric, 0.0)
+            record["metrics"][metric] = om_amount / revenue if revenue else 0.0
+        record.pop("_om_for_om", None)
+        if any(abs(value) > 0.000001 for value in record["metrics"].values()):
+            record["labels"] = {
+                metric: _target_value_label(metric, value)
+                for metric, value in record["metrics"].items()
+            }
+            account_rows.append(record)
+
+    account_rows.sort(key=lambda row: (str(row["slsName"]).lower(), str(row["groupName"]).lower(), str(row["accountName"]).lower()))
+    return account_rows
 
 
 def _cell(row: list[Any], index: int) -> Any:

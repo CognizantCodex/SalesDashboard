@@ -19,6 +19,9 @@ SLSM_REVENUE_FORECAST_TABLE = "slsm_revenue_forecast"
 SLSM_PIPELINE_UPLOAD_TABLE = "slsm_pipeline_upload"
 SLSM_WINS_LOST_TABLE = "slsm_wins_lost"
 SLSM_PENDING_VALIDATION_TABLE = "slsm_pending_validation"
+TARGET_UPLOAD_TABLE = "target_upload"
+TARGET_SLS_TABLE = "target_sls"
+TARGET_ACCOUNT_TABLE = "target_accounts"
 
 
 def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str, table_name: str = "revenue_forecast") -> int:
@@ -243,6 +246,123 @@ def load_slsm_revenue_forecast() -> tuple[list[str], list[list[Any]], str | None
     return load_revenue_forecast(SLSM_REVENUE_FORECAST_TABLE)
 
 
+def replace_target_upload(
+    source_filename: str,
+    sheet_name: str,
+    metrics: list[str],
+    sls_rows: list[dict[str, Any]],
+    account_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(TARGET_UPLOAD_TABLE)}")
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(TARGET_SLS_TABLE)}")
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(TARGET_ACCOUNT_TABLE)}")
+        conn.execute(_create_target_upload_table_sql())
+        conn.execute(_create_target_row_table_sql(TARGET_SLS_TABLE, "sls_name"))
+        conn.execute(_create_target_row_table_sql(TARGET_ACCOUNT_TABLE, "account_name", include_sls=True))
+        conn.execute(
+            f"""
+            INSERT INTO {_quote_identifier(TARGET_UPLOAD_TABLE)}
+                (id, source_filename, sheet_name, sls_count, account_count, metrics_json, uploaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1,
+                source_filename,
+                sheet_name,
+                len(sls_rows),
+                len(account_rows),
+                json.dumps(metrics),
+                datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            ),
+        )
+        conn.executemany(
+            f"""
+            INSERT INTO {_quote_identifier(TARGET_SLS_TABLE)}
+                (source_filename, row_number, sls_name, metrics_json, labels_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    source_filename,
+                    row.get("rowNumber"),
+                    row.get("slsName"),
+                    json.dumps(row.get("metrics", {})),
+                    json.dumps(row.get("labels", {})),
+                )
+                for row in sls_rows
+            ],
+        )
+        conn.executemany(
+            f"""
+            INSERT INTO {_quote_identifier(TARGET_ACCOUNT_TABLE)}
+                (source_filename, row_number, sls_name, account_name, group_name, metrics_json, labels_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    source_filename,
+                    row.get("rowNumber"),
+                    row.get("slsName"),
+                    row.get("accountName"),
+                    row.get("groupName", ""),
+                    json.dumps(row.get("metrics", {})),
+                    json.dumps(row.get("labels", {})),
+                )
+                for row in account_rows
+            ],
+        )
+
+    return load_target_upload_metadata()
+
+
+def load_target_upload_metadata() -> dict[str, Any]:
+    if not DATABASE_PATH.exists():
+        return _empty_target_metadata()
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        if not _table_exists(conn, TARGET_UPLOAD_TABLE):
+            return _empty_target_metadata()
+
+        row = conn.execute(
+            f"""
+            SELECT source_filename, sheet_name, sls_count, account_count, metrics_json, uploaded_at
+            FROM {_quote_identifier(TARGET_UPLOAD_TABLE)}
+            WHERE id = 1
+            """
+        ).fetchone()
+
+    if not row:
+        return _empty_target_metadata()
+
+    source_filename, sheet_name, sls_count, account_count, metrics_json, uploaded_at = row
+    return {
+        "available": sls_count > 0,
+        "table": TARGET_UPLOAD_TABLE,
+        "sourceFilename": source_filename,
+        "sheet": sheet_name,
+        "slsCount": sls_count,
+        "accountCount": account_count,
+        "rowsSaved": account_count,
+        "metrics": json.loads(metrics_json or "[]"),
+        "uploadedAt": uploaded_at,
+    }
+
+
+def load_target_sls_summary() -> list[dict[str, Any]]:
+    return _load_target_rows(TARGET_SLS_TABLE)
+
+
+def load_target_accounts_for_sls(sls_name: str) -> list[dict[str, Any]]:
+    return _load_target_rows(TARGET_ACCOUNT_TABLE, sls_name)
+
+
+def load_target_accounts() -> list[dict[str, Any]]:
+    return _load_target_account_rows()
+
+
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -361,6 +481,127 @@ def _create_table_sql(table_name_or_columns, columns: list[str] | None = None) -
 {excel_columns}
             )
             """
+
+
+def _create_target_upload_table_sql() -> str:
+    return f"""
+            CREATE TABLE {_quote_identifier(TARGET_UPLOAD_TABLE)} (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                source_filename TEXT,
+                sheet_name TEXT NOT NULL,
+                sls_count INTEGER NOT NULL,
+                account_count INTEGER NOT NULL,
+                metrics_json TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL
+            )
+            """
+
+
+def _create_target_row_table_sql(table_name: str, name_column: str, include_sls: bool = False) -> str:
+    sls_column = "sls_name TEXT NOT NULL," if include_sls else ""
+    group_column = "group_name TEXT," if table_name == TARGET_ACCOUNT_TABLE else ""
+    return f"""
+            CREATE TABLE {_quote_identifier(table_name)} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_filename TEXT,
+                row_number INTEGER NOT NULL,
+                {sls_column}
+                {_quote_identifier(name_column)} TEXT NOT NULL,
+                {group_column}
+                metrics_json TEXT NOT NULL,
+                labels_json TEXT NOT NULL
+            )
+            """
+
+
+def _empty_target_metadata() -> dict[str, Any]:
+    return {
+        "available": False,
+        "table": TARGET_UPLOAD_TABLE,
+        "rowsSaved": 0,
+        "sourceFilename": None,
+        "sheet": None,
+        "slsCount": 0,
+        "accountCount": 0,
+        "metrics": [],
+    }
+
+
+def _load_target_rows(table_name: str, sls_name: str | None = None) -> list[dict[str, Any]]:
+    if not DATABASE_PATH.exists():
+        return []
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        if not _table_exists(conn, table_name):
+            return []
+
+        if sls_name is None:
+            records = conn.execute(
+                f"""
+                SELECT row_number, sls_name, metrics_json, labels_json
+                FROM {_quote_identifier(table_name)}
+                ORDER BY row_number
+                """
+            ).fetchall()
+            return [
+                {
+                    "rowNumber": row_number,
+                    "slsName": name,
+                    "metrics": json.loads(metrics_json or "{}"),
+                    "labels": json.loads(labels_json or "{}"),
+                }
+                for row_number, name, metrics_json, labels_json in records
+            ]
+
+        records = conn.execute(
+            f"""
+            SELECT row_number, sls_name, account_name, group_name, metrics_json, labels_json
+            FROM {_quote_identifier(table_name)}
+            WHERE sls_name = ?
+            ORDER BY row_number
+            """,
+            (sls_name,),
+        ).fetchall()
+    return [
+        {
+            "rowNumber": row_number,
+            "slsName": sls,
+            "accountName": account,
+            "groupName": group_name or "",
+            "metrics": json.loads(metrics_json or "{}"),
+            "labels": json.loads(labels_json or "{}"),
+        }
+        for row_number, sls, account, group_name, metrics_json, labels_json in records
+    ]
+
+
+def _load_target_account_rows() -> list[dict[str, Any]]:
+    if not DATABASE_PATH.exists():
+        return []
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        if not _table_exists(conn, TARGET_ACCOUNT_TABLE):
+            return []
+
+        records = conn.execute(
+            f"""
+            SELECT row_number, sls_name, account_name, group_name, metrics_json, labels_json
+            FROM {_quote_identifier(TARGET_ACCOUNT_TABLE)}
+            ORDER BY row_number
+            """
+        ).fetchall()
+
+    return [
+        {
+            "rowNumber": row_number,
+            "slsName": sls,
+            "accountName": account,
+            "groupName": group_name or "",
+            "metrics": json.loads(metrics_json or "{}"),
+            "labels": json.loads(labels_json or "{}"),
+        }
+        for row_number, sls, account, group_name, metrics_json, labels_json in records
+    ]
 
 
 def _unique_column_names(headers: list[str]) -> list[str]:

@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import SalesPendingValidation from './sales_pending_validation.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
 import SalesRevenue from './sales_revenue.jsx';
+import SalesTcvDetails from './sales_tcv_details.jsx';
 import SalesWonLost from './sales_won_lost.jsx';
 import { file, fileList, jsonResponse, mockFetch, pendingSummary, pipelineSummary, revenueMetrics, wonSummary } from './test/test-utils.jsx';
 
@@ -168,5 +169,54 @@ describe('silent summary loaders', () => {
 
     expect(onWon).toHaveBeenCalledWith(null);
     await waitFor(() => expect(onPending).toHaveBeenCalledWith(null));
+  });
+});
+
+describe('SalesTcvDetails', () => {
+  it('adds Target TCV by account and practice from uploaded targets', async () => {
+    mockFetch((url) => {
+      if (url.includes('/api/targets/accounts/current')) {
+        return {
+          available: true,
+          rows: [
+            {
+              accountName: 'BROADRIDGE FINANCIAL',
+              metrics: {
+                'TCV-DE': 300000,
+                'TCV-SPE': 300000
+              }
+            }
+          ]
+        };
+      }
+      return { available: false };
+    });
+
+    render(
+      <SalesTcvDetails
+        wonLostSummary={{
+          available: true,
+          query: 'Seller A',
+          year: 2026,
+          metrics: { won: 136000, labels: { won: '$0.1M' } },
+          rows: [
+            {
+              account: 'BROADRIDGE FINANCIAL',
+              practice: 'Digital Engineering',
+              dealType: 'Unspecified',
+              won: 136000,
+              rows: 1
+            }
+          ]
+        }}
+        pendingValidationSummary={null}
+        onBack={vi.fn()}
+      />
+    );
+
+    expect((await screen.findAllByText('Target TCV')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Digital Engineering')).toBeInTheDocument();
+    expect(screen.getAllByText('$0.3M').length).toBeGreaterThan(0);
+    expect(screen.queryByText('SPE')).not.toBeInTheDocument();
   });
 });

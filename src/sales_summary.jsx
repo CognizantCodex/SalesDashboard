@@ -1,15 +1,16 @@
 import React from 'react';
 
-export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, onRevenueDetailsClick, onPipelineDetailsClick, onTcvDetailsClick }) {
-  if (!revenueSummary && !pipelineSummary && !wonLostSummary && !pendingValidationSummary) return null;
+export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostSummary, pendingValidationSummary, targetTcvSummary, onRevenueDetailsClick, onPipelineDetailsClick, onTcvDetailsClick }) {
+  if (!revenueSummary && !pipelineSummary && !wonLostSummary && !pendingValidationSummary && !targetTcvSummary) return null;
 
   const realizedYear = wonLostSummary?.year || pendingValidationSummary?.year;
+  const targetTcv = targetTcvSummary?.metrics?.targetTcv || 0;
   const wonTcv = wonLostSummary?.metrics?.won || 0;
   const pendingValidationTcv = pendingValidationSummary?.metrics?.pendingValidation || 0;
   const totalTcvMillions = roundedMillions(wonTcv) + roundedMillions(pendingValidationTcv);
   const showRevenue = (revenueSummary?.forecast || 0) !== 0;
   const showPipeline = (pipelineSummary?.metrics?.pipeline || 0) !== 0;
-  const showRealizedTcv = totalTcvMillions !== 0;
+  const showRealizedTcv = totalTcvMillions !== 0 || targetTcv !== 0;
   const hasVisibleSummary = showRevenue || showPipeline || showRealizedTcv;
 
   if (!hasVisibleSummary) return null;
@@ -39,6 +40,7 @@ export default function SalesSummary({ revenueSummary, pipelineSummary, wonLostS
       </SummaryGroup>
 
       <SummaryGroup title={realizedYear ? 'Realized TCV Summary CY ' + realizedYear : 'Realized TCV Summary'} hidden={!showRealizedTcv} action={onTcvDetailsClick ? <button className="summary-link" onClick={onTcvDetailsClick}>TCV Details</button> : null}>
+        <Metric label="Target TCV" value={targetTcvSummary?.metrics?.labels?.targetTcv || '$0.0M'} />
         <Metric label="Total TCV" value={formatMillionLabel(totalTcvMillions)} />
         <Metric label="Won TCV" value={wonLostSummary?.metrics?.labels?.won || '$0.0M'} />
         <Metric label="Pending Validation TCV" value={pendingValidationSummary?.metrics?.labels?.pendingValidation || '$0.0M'} />

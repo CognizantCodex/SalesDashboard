@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import SalesSummary from './sales_summary.jsx';
+import { apiUrl } from './api.js';
 
 const CRC_TABLE = (() => {
   const table = [];
@@ -16,6 +17,37 @@ const CRC_TABLE = (() => {
 export default function SalesTcvDetails({ wonLostSummary, pendingValidationSummary, onBack, entityLabel = 'SLS' }) {
   const [error, setError] = useState('');
   const [dealTypeFilter, setDealTypeFilter] = useState('All');
+  const [targetRows, setTargetRows] = useState([]);
+  const year = wonLostSummary?.year || pendingValidationSummary?.year || new Date().getFullYear();
+  const queryName = wonLostSummary?.query || pendingValidationSummary?.query || entityLabel;
+
+  useEffect(() => {
+    if (!queryName || queryName === entityLabel) {
+      setTargetRows([]);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    async function loadTargets() {
+      try {
+        const response = await fetch(apiUrl(`/api/targets/accounts/current?slsName=${encodeURIComponent(queryName)}`), {
+          signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.available) {
+          setTargetRows([]);
+          return;
+        }
+        setTargetRows(payload.rows || []);
+      } catch (err) {
+        if (err.name !== 'AbortError') setTargetRows([]);
+      }
+    }
+
+    loadTargets();
+    return () => controller.abort();
+  }, [queryName, entityLabel]);
+
   const dealTypeOptions = useMemo(() => {
     const dealTypes = new Set([
       ...(wonLostSummary?.rows || []).map((row) => row.dealType || 'Unspecified'),
@@ -24,8 +56,8 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
     return ['All', ...Array.from(dealTypes).sort()];
   }, [wonLostSummary, pendingValidationSummary]);
   const combinedAccounts = useMemo(
-    () => buildCombinedAccounts(wonLostSummary?.rows || [], pendingValidationSummary?.rows || [], dealTypeFilter),
-    [wonLostSummary, pendingValidationSummary, dealTypeFilter]
+    () => buildCombinedAccounts(wonLostSummary?.rows || [], pendingValidationSummary?.rows || [], dealTypeFilter, targetRows),
+    [wonLostSummary, pendingValidationSummary, dealTypeFilter, targetRows]
   );
   const filteredWonLostSummary = useMemo(
     () => buildFilteredWonLostSummary(wonLostSummary, combinedAccounts, dealTypeFilter),
@@ -34,6 +66,10 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
   const filteredPendingValidationSummary = useMemo(
     () => buildFilteredPendingValidationSummary(pendingValidationSummary, combinedAccounts, dealTypeFilter),
     [pendingValidationSummary, combinedAccounts, dealTypeFilter]
+  );
+  const filteredTargetTcvSummary = useMemo(
+    () => buildFilteredTargetTcvSummary(combinedAccounts, queryName),
+    [combinedAccounts, queryName]
   );
   const accountRows = useMemo(() => {
     return combinedAccounts.flatMap((account) => {
@@ -45,9 +81,6 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
       ];
     });
   }, [combinedAccounts]);
-  const year = wonLostSummary?.year || pendingValidationSummary?.year || new Date().getFullYear();
-  const queryName = wonLostSummary?.query || pendingValidationSummary?.query || entityLabel;
-
   function exportExcel() {
     if (!combinedAccounts.length) {
       setError('TCV details are not available to export.');
@@ -66,15 +99,17 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
       cells: [
         { column: 1, value: 'Account', style: 1 },
         { column: 2, value: 'Practice', style: 1 },
-        { column: 3, value: 'Total TCV', style: 1 },
-        { column: 4, value: 'Won TCV', style: 1 },
-        { column: 5, value: 'Pending Validation TCV', style: 1 }
+        { column: 3, value: 'Target TCV', style: 1 },
+        { column: 4, value: 'Total TCV', style: 1 },
+        { column: 5, value: 'Won TCV', style: 1 },
+        { column: 6, value: 'Pending Validation TCV', style: 1 }
       ]
     }];
     const merges = [];
     let rowIndex = 2;
 
     const grandTotal = {
+      targetTcv: 0,
       total: 0,
       won: 0,
       pendingValidation: 0
@@ -84,6 +119,7 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
       const practices = account.practices || [];
       const firstAccountRow = rowIndex;
       const rowSpan = Math.max(practices.length + 1, 1);
+      grandTotal.targetTcv += account.targetTcv || 0;
       grandTotal.total += account.total || 0;
       grandTotal.won += account.won || 0;
       grandTotal.pendingValidation += account.pendingValidation || 0;
@@ -94,9 +130,10 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
           cells: [
             { column: 1, value: practiceIndex === 0 ? account.account : '', style: 2 },
             { column: 2, value: practice.practice, style: 3 },
-            { column: 3, value: practice.labels.total, style: 4 },
-            { column: 4, value: practice.labels.won, style: 4 },
-            { column: 5, value: practice.labels.pendingValidation, style: 4 }
+            { column: 3, value: practice.labels.targetTcv, style: 4 },
+            { column: 4, value: practice.labels.total, style: 4 },
+            { column: 5, value: practice.labels.won, style: 4 },
+            { column: 6, value: practice.labels.pendingValidation, style: 4 }
           ]
         });
         rowIndex += 1;
@@ -107,9 +144,10 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
         cells: [
           { column: 1, value: practices.length === 0 ? account.account : '', style: 2 },
           { column: 2, value: 'Total', style: 5 },
-          { column: 3, value: account.labels.total, style: 5 },
-          { column: 4, value: account.labels.won, style: 5 },
-          { column: 5, value: account.labels.pendingValidation, style: 5 }
+          { column: 3, value: account.labels.targetTcv, style: 5 },
+          { column: 4, value: account.labels.total, style: 5 },
+          { column: 5, value: account.labels.won, style: 5 },
+          { column: 6, value: account.labels.pendingValidation, style: 5 }
         ]
       });
 
@@ -124,9 +162,10 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
       cells: [
         { column: 1, value: 'Grand Total', style: 5 },
         { column: 2, value: '', style: 5 },
-        { column: 3, value: formatPipelineMoney(grandTotal.total), style: 5 },
-        { column: 4, value: formatPipelineMoney(grandTotal.won), style: 5 },
-        { column: 5, value: formatPipelineMoney(grandTotal.pendingValidation), style: 5 }
+        { column: 3, value: formatPipelineMoney(grandTotal.targetTcv), style: 5 },
+        { column: 4, value: formatPipelineMoney(grandTotal.total), style: 5 },
+        { column: 5, value: formatPipelineMoney(grandTotal.won), style: 5 },
+        { column: 6, value: formatPipelineMoney(grandTotal.pendingValidation), style: 5 }
       ]
     });
 
@@ -145,7 +184,7 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
       <main className="container detail-container">
         <button className="back-link" onClick={onBack}>Back to Dashboard</button>
 
-        <SalesSummary wonLostSummary={filteredWonLostSummary} pendingValidationSummary={filteredPendingValidationSummary} />
+        <SalesSummary wonLostSummary={filteredWonLostSummary} pendingValidationSummary={filteredPendingValidationSummary} targetTcvSummary={filteredTargetTcvSummary} />
 
         <div className="detail-filter-row">
           <label htmlFor="tcv-grouped-deal-type">Grouped Deal Type</label>
@@ -170,6 +209,7 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
                 <tr>
                   <th>Account</th>
                   <th>Practice</th>
+                  <th>Target TCV</th>
                   <th>Total TCV</th>
                   <th>Won TCV</th>
                   <th>Pending Validation TCV</th>
@@ -179,12 +219,13 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
                 {accountRows.map((row, index) => (
                   row.type === 'account-heading' ? (
                     <tr key={row.type + '-' + row.account + '-' + index} className="acct-row">
-                      <td colSpan="5">{row.account}</td>
+                      <td colSpan="6">{row.account}</td>
                     </tr>
                   ) : (
                     <tr key={row.type + '-' + row.account + '-' + (row.practice || index)} className={row.type === 'account-total' ? 'total-row' : 'detail-row'}>
                       <td>{row.type === 'account-total' ? row.account + ' - Total' : ''}</td>
                       <td>{row.type === 'practice' ? row.practice : ''}</td>
+                      <td>{row.labels.targetTcv}</td>
                       <td>{row.labels.total}</td>
                       <td>{row.labels.won}</td>
                       <td>{row.labels.pendingValidation}</td>
@@ -200,7 +241,7 @@ export default function SalesTcvDetails({ wonLostSummary, pendingValidationSumma
   );
 }
 
-function buildCombinedAccounts(wonRows, pendingRows, dealTypeFilter) {
+function buildCombinedAccounts(wonRows, pendingRows, dealTypeFilter, targetRows = []) {
   const details = new Map();
   wonRows.forEach((row) => {
     if (!matchesDealType(row, dealTypeFilter)) return;
@@ -210,22 +251,25 @@ function buildCombinedAccounts(wonRows, pendingRows, dealTypeFilter) {
     if (!matchesDealType(row, dealTypeFilter)) return;
     mergeDetail(details, row, { pendingValidation: row.pendingValidation || 0 });
   });
+  targetRows.forEach((row) => mergeTargetDetails(details, row));
 
   const accountMap = new Map();
   Array.from(details.values())
     .map((detail) => ({ ...detail, total: (detail.won || 0) + (detail.pendingValidation || 0) }))
-    .filter((detail) => detail.total !== 0)
+    .filter((detail) => detail.total !== 0 || detail.targetTcv !== 0)
     .sort((a, b) => (a.account + a.practice).localeCompare(b.account + b.practice))
     .forEach((detail) => {
       const labeledDetail = withLabels(detail);
       const account = accountMap.get(detail.account) || {
         account: detail.account,
+        targetTcv: 0,
         total: 0,
         won: 0,
         pendingValidation: 0,
         rows: 0,
         practices: []
       };
+      account.targetTcv += detail.targetTcv || 0;
       account.total += detail.total;
       account.won += detail.won || 0;
       account.pendingValidation += detail.pendingValidation || 0;
@@ -238,18 +282,44 @@ function buildCombinedAccounts(wonRows, pendingRows, dealTypeFilter) {
 }
 
 function mergeDetail(details, row, amounts) {
-  const key = (row.account || '') + '__' + (row.practice || '');
+  const key = detailKey(row.account || '', row.practice || '');
   const detail = details.get(key) || {
     account: row.account || '',
     practice: row.practice || '',
+    targetTcv: 0,
     won: 0,
     pendingValidation: 0,
     rows: 0
   };
+  if (!detail.account && row.account) detail.account = row.account;
+  if (!detail.practice && row.practice) detail.practice = row.practice;
   detail.won += amounts.won || 0;
   detail.pendingValidation += amounts.pendingValidation || 0;
   detail.rows += row.rows || 0;
   details.set(key, detail);
+}
+
+function mergeTargetDetails(details, row) {
+  const account = row.accountName || row.account || '';
+  Object.entries(row.metrics || {}).forEach(([metric, value]) => {
+    if (!metric.startsWith('TCV-')) return;
+    if (metric === 'TCV-SPE') return;
+    const targetTcv = Number(value || 0);
+    if (!targetTcv) return;
+    const practiceCode = metric.replace('TCV-', '');
+    const practice = targetPracticeLabel(practiceCode);
+    const key = detailKey(account, practice);
+    const detail = details.get(key) || {
+      account,
+      practice,
+      targetTcv: 0,
+      won: 0,
+      pendingValidation: 0,
+      rows: 0
+    };
+    detail.targetTcv += targetTcv;
+    details.set(key, detail);
+  });
 }
 
 function matchesDealType(row, dealTypeFilter) {
@@ -311,10 +381,23 @@ function buildFilteredPendingValidationSummary(pendingValidationSummary, account
   };
 }
 
+function buildFilteredTargetTcvSummary(accounts, queryName) {
+  const targetTcv = accounts.reduce((total, account) => total + (account.targetTcv || 0), 0);
+  if (!targetTcv) return null;
+  return {
+    query: queryName,
+    metrics: {
+      targetTcv,
+      labels: { targetTcv: formatPipelineMoney(targetTcv) }
+    }
+  };
+}
+
 function withLabels(item) {
   return {
     ...item,
     labels: {
+      targetTcv: formatPipelineMoney(item.targetTcv || 0),
       total: formatPipelineMoney(item.total || 0),
       won: formatPipelineMoney(item.won || 0),
       pendingValidation: formatPipelineMoney(item.pendingValidation || 0)
@@ -324,6 +407,29 @@ function withLabels(item) {
 
 function formatPipelineMoney(value) {
   return '$' + (value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
+}
+
+function detailKey(account, practice) {
+  return normalizeAccount(account) + '__' + normalizePractice(practice);
+}
+
+function normalizeAccount(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function normalizePractice(value) {
+  const text = String(value || '').toLowerCase();
+  if (text.includes('digital') || text === 'de') return 'DE';
+  if (text.includes('adm')) return 'ADM';
+  if (text.includes('qea')) return 'QEA';
+  if (text.includes('spe')) return 'SPE';
+  return text.toUpperCase();
+}
+
+function targetPracticeLabel(value) {
+  const code = normalizePractice(value);
+  if (code === 'DE') return 'Digital Engineering';
+  return code;
 }
 
 function safeFileName(value) {
@@ -354,8 +460,8 @@ function createWorksheetXml(sheetRows, merges, lastRow) {
   return [
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
-    '<dimension ref="A1:E' + lastRow + '"/>',
-    '<cols><col min="1" max="1" width="30" customWidth="1"/><col min="2" max="2" width="26" customWidth="1"/><col min="3" max="5" width="22" customWidth="1"/></cols>',
+    '<dimension ref="A1:F' + lastRow + '"/>',
+    '<cols><col min="1" max="1" width="30" customWidth="1"/><col min="2" max="2" width="26" customWidth="1"/><col min="3" max="6" width="22" customWidth="1"/></cols>',
     '<sheetData>' + rowXml + '</sheetData>',
     mergeXml,
     '</worksheet>'
