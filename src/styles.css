@@ -229,6 +229,165 @@ header span {
   text-transform: uppercase;
 }
 
+.targets-page {
+  display: grid;
+  gap: 0.6rem;
+  padding-top: 0.7rem;
+}
+
+.targets-upload {
+  min-height: 96px;
+  padding: 0.75rem 1rem;
+}
+
+.targets-upload .upload-icon {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 4px;
+}
+
+.targets-upload .upload-kicker {
+  margin-bottom: 4px;
+}
+
+.targets-upload .upload-title {
+  margin-top: 2px;
+}
+
+.targets-upload .upload-sub {
+  margin-top: 2px;
+}
+
+.targets-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.target-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.target-summary-card {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  box-shadow: var(--shadow);
+}
+
+.target-summary-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.target-summary-card strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: var(--brand);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-table-wrap {
+  margin-top: 0;
+}
+
+.target-matched-sls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.target-table-scroll {
+  overflow-x: auto;
+}
+
+.target-table {
+  min-width: 1280px;
+  table-layout: auto;
+}
+
+.target-table th,
+.target-table td {
+  padding: 7px 10px;
+  border-top: 1px solid #edf2f8;
+  white-space: nowrap;
+}
+
+.target-table tbody tr:nth-child(even) td {
+  background: #f8fbff;
+}
+
+.target-table tbody tr:nth-child(odd) td {
+  background: var(--surface);
+}
+
+.target-table thead th {
+  border-top: 0;
+}
+
+.target-table th:first-child,
+.target-table td:first-child {
+  position: sticky;
+  left: 0;
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
+  color: #43516a;
+  z-index: 1;
+  white-space: normal;
+}
+
+.target-table thead th:first-child {
+  background: var(--surface-soft);
+  z-index: 2;
+}
+
+.target-table th:not(:first-child),
+.target-table td:not(:first-child) {
+  min-width: 96px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.target-table tfoot td {
+  border-top: 1px solid var(--line-strong);
+  background: #eef4fa;
+  color: var(--brand);
+  font-weight: 800;
+}
+
+.target-table tfoot td:first-child {
+  background: #eef4fa;
+}
+
+.target-account-name {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.targets-empty {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .upload-icon {
   width: 34px;
   height: 34px;

@@ -4,7 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.forecast_agent import analyze_pipeline_rows
+from app import forecast_agent
+from app.forecast_agent import analyze_pipeline_rows, parse_target_pivot
 
 
 client = TestClient(main.app)
@@ -165,7 +166,7 @@ def test_health_and_swagger_include_all_api_routes():
     assert expected_paths <= documented_paths
     assert spec["info"]["title"] == "SLS Forecast Agent"
     documented_tags = {tag["name"] for tag in spec["tags"]}
-    assert {"Forecast", "SLSM Forecast", "SLSL Summary", "SLSM Breakdown", "Pipeline"} <= documented_tags
+    assert {"Forecast", "SLSM Forecast", "SLSL Summary", "SLSM Breakdown", "Pipeline", "Targets"} <= documented_tags
     for path in expected_paths:
         for operation in spec["paths"][path].values():
             assert operation["tags"]
@@ -191,6 +192,118 @@ def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):
     assert client.get("/api/slsm/pipeline/upload/metadata").json()["database"]["sharedFrom"] == "sls"
     assert client.get("/api/slsm/wins-lost/upload/metadata").json()["database"]["sharedFrom"] == "sls"
     assert client.get("/api/slsm/pending-validation/upload/metadata").json()["database"]["sharedFrom"] == "sls"
+
+
+def test_target_parser_extracts_sls_and_account_rows(monkeypatch):
+    monkeypatch.setattr(
+        forecast_agent,
+        "_read_sheet",
+        lambda *_args: [
+            ["SLSM", "(All)"],
+            [],
+            ["Row Labels", " Rev-ADM", " OM %-ADM", " TCV-ADM"],
+            ["Seller A", 10_500_000, 0.25, 20_000_000],
+            ["S1.917-US Bank", 10_500_000, 0.25, 20_000_000],
+            ["2002577 - U.S.BANCORP", 7_000_000, 0.3, 15_000_000],
+            ["2003000 - Account Detail", 3_500_000, 0.2, 5_000_000],
+            ["Seller B", 2_000_000, 0.1, 8_000_000],
+            ["Grand Total", 12_500_000, 0.2, 28_000_000],
+        ],
+    )
+
+    payload = parse_target_pivot(b"bytes", "targets.xlsb")
+
+    assert payload["metrics"] == ["Rev-ADM", "OM %-ADM", "TCV-ADM"]
+    assert [row["slsName"] for row in payload["slsRows"]] == ["Seller A", "Seller B"]
+    assert [row["accountName"] for row in payload["accountRows"]] == [
+        "U.S.BANCORP",
+        "Account Detail",
+        "Total",
+    ]
+    assert payload["accountRows"][0]["groupName"] == "S1.917-US Bank"
+    assert payload["accountRows"][0]["labels"]["Rev-ADM"] == "$7.0M"
+    assert payload["accountRows"][0]["labels"]["OM %-ADM"] == "30.0%"
+
+
+def test_target_parser_uses_data_sheet_for_account_level_rows(monkeypatch):
+    def read_sheet(_bytes, _filename, sheet_name):
+        if sheet_name == "Data":
+            return [
+                [None, "BU", "SBU1", "Parent ID", "Parent Name", "SLSM", "SLS", "Rev-ADM", "Rev-SPE", "OM-ADM", "OM-SPE", "OM%-ADM", "OM%-SPE", "TCV-ADM", "TCV-SPE", "ACV-ADM", "ACV-SPE"],
+                [None, "BU", "S1.902-Banks 1", 2000361, "2000361 - BLOOMBERG", "Manager", "Seller A", 2_000_000, 5_000_000, 400_000, 1_000_000, 0.2, 0.2, 3_000_000, 7_000_000, 1_500_000, 4_000_000],
+                [None, "BU", "S1.902-Banks 1", 2000417, "2000417 - BROADRIDGE FINANCIAL", "Manager", "Seller A", 1_000_000, 2_000_000, 100_000, 300_000, 0.1, 0.15, 2_000_000, 4_000_000, 900_000, 2_500_000],
+            ]
+        return [
+            ["Row Labels", " Rev-ADM", " Rev-SPE", " OM %-ADM", " OM %-SPE", " TCV-ADM", " TCV-SPE", " ACV-ADM", " ACV-SPE"],
+            ["Seller A", 3_000_000, 7_000_000, 0.1667, 0.1857, 5_000_000, 11_000_000, 2_400_000, 6_500_000],
+            ["Grand Total", 3_000_000, 7_000_000, 0.1667, 0.1857, 5_000_000, 11_000_000, 2_400_000, 6_500_000],
+        ]
+
+    monkeypatch.setattr(forecast_agent, "_read_sheet", read_sheet)
+
+    payload = parse_target_pivot(b"bytes", "targets.xlsb")
+
+    assert [row["accountName"] for row in payload["accountRows"]] == [
+        "BLOOMBERG",
+        "BROADRIDGE FINANCIAL",
+    ]
+    assert payload["accountRows"][0]["groupName"] == "S1.902-Banks 1"
+    assert payload["accountRows"][0]["labels"]["TCV-SPE"] == "$7.0M"
+    assert payload["accountRows"][0]["labels"]["OM %-ADM"] == "20.0%"
+
+
+def test_target_current_upload_and_account_endpoints(monkeypatch):
+    target_metadata = {
+        "available": True,
+        "table": "target_upload",
+        "rowsSaved": 2,
+        "sourceFilename": "targets.xlsb",
+        "sheet": "SLM-SLS-Pivot",
+        "slsCount": 1,
+        "accountCount": 2,
+        "metrics": ["Rev-ADM"],
+    }
+    target_rows = [{"slsName": "Seller A", "metrics": {"Rev-ADM": 10}, "labels": {"Rev-ADM": "$10.0M"}}]
+    account_rows = [
+        {"slsName": "Seller A", "accountName": "Account A", "metrics": {"Rev-ADM": 10}, "labels": {"Rev-ADM": "$10.0M"}},
+        {"slsName": "Seller A + Seller B", "accountName": "Combination Account", "metrics": {"Rev-ADM": 4}, "labels": {"Rev-ADM": "$4.0M"}},
+        {"slsName": "Other Seller", "accountName": "Other Account", "metrics": {"Rev-ADM": 1}, "labels": {"Rev-ADM": "$1.0M"}},
+    ]
+    monkeypatch.setattr(main, "load_target_upload_metadata", lambda: target_metadata)
+    monkeypatch.setattr(main, "load_target_sls_summary", lambda: target_rows)
+    monkeypatch.setattr(main, "load_target_accounts", lambda: account_rows)
+    monkeypatch.setattr(
+        main,
+        "parse_target_pivot",
+        lambda *_args: {
+            "sheetName": "SLM-SLS-Pivot",
+            "metrics": ["Rev-ADM"],
+            "slsRows": target_rows,
+            "accountRows": account_rows,
+        },
+    )
+    monkeypatch.setattr(main, "replace_target_upload", lambda *_args: target_metadata)
+
+    assert client.get("/api/targets/upload/metadata").json()["database"]["table"] == "target_upload"
+    current = client.get("/api/targets/current").json()
+    assert current["metrics"] == ["Rev-ADM"]
+    assert current["rows"][0]["slsName"] == "Seller A"
+    accounts = client.get("/api/targets/accounts/current", params={"slsName": "Seller A"}).json()
+    assert accounts["rows"][0]["accountName"] == "Account A"
+    assert [row["accountName"] for row in accounts["rows"]] == ["Account A", "Combination Account"]
+    assert accounts["matchedSlsNames"] == ["Seller A", "Seller A + Seller B"]
+    upload = client.post("/api/targets/upload", files=upload_file()).json()
+    assert upload["database"]["sourceFilename"] == "targets.xlsb"
+
+
+def test_target_endpoints_handle_missing_data_and_parse_errors(monkeypatch):
+    monkeypatch.setattr(main, "load_target_upload_metadata", lambda: {"available": False, "table": "target_upload", "rowsSaved": 0})
+
+    assert client.get("/api/targets/current").json()["available"] is False
+    assert client.get("/api/targets/accounts/current", params={"slsName": ""}).status_code == 400
+
+    monkeypatch.setattr(main, "parse_target_pivot", lambda *args: (_ for _ in ()).throw(ValueError("target parse failed")))
+    assert client.post("/api/targets/upload", files=upload_file()).status_code == 400
 
 
 def test_current_forecast_and_options_endpoints(patched_storage, patched_analyzers, monkeypatch):

@@ -27,6 +27,7 @@ describe('SalesSummary', () => {
         pipelineSummary={pipelineSummary()}
         wonLostSummary={wonSummary()}
         pendingValidationSummary={pendingSummary()}
+        targetTcvSummary={{ metrics: { targetTcv: 7_000_000, labels: { targetTcv: '$7.0M' } } }}
         onRevenueDetailsClick={onRevenueDetailsClick}
         onPipelineDetailsClick={onPipelineDetailsClick}
         onTcvDetailsClick={onTcvDetailsClick}
@@ -36,6 +37,8 @@ describe('SalesSummary', () => {
     expect(screen.getByText('Revenue Summary')).toBeInTheDocument();
     expect(screen.getByText('Pipeline Summary CY 2026')).toBeInTheDocument();
     expect(screen.getByText('Realized TCV Summary CY 2026')).toBeInTheDocument();
+    expect(screen.getByText('Target TCV')).toBeInTheDocument();
+    expect(screen.getByText('$7.0M')).toBeInTheDocument();
     expect(screen.getByText('$2.5M')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Revenue Details' }));

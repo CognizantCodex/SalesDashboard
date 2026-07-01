@@ -22,6 +22,9 @@ from .database import (
     load_slsm_revenue_forecast_metadata,
     load_slsm_wins_lost,
     load_slsm_wins_lost_metadata,
+    load_target_accounts,
+    load_target_sls_summary,
+    load_target_upload_metadata,
     load_wins_lost_metadata,
     replace_pending_validation,
     replace_pipeline_upload,
@@ -30,9 +33,10 @@ from .database import (
     replace_slsm_pipeline_upload,
     replace_slsm_revenue_forecast,
     replace_slsm_wins_lost,
+    replace_target_upload,
     replace_wins_lost,
 )
-from .forecast_agent import SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
 
 
 OPENAPI_TAGS = [
@@ -45,6 +49,7 @@ OPENAPI_TAGS = [
     {"name": "SLSM Pipeline", "description": "SLSM pipeline upload and summary APIs."},
     {"name": "Realized TCV", "description": "Won/lost and pending validation APIs."},
     {"name": "SLSM Realized TCV", "description": "SLSM won/lost and pending validation APIs."},
+    {"name": "Targets", "description": "Target workbook upload and SLS account target APIs."},
 ]
 
 
@@ -310,6 +315,54 @@ async def slsm_pending_validation_upload_metadata() -> dict:
     return {"available": metadata["available"], "database": metadata}
 
 
+@app.get("/api/targets/upload/metadata")
+async def target_upload_metadata() -> dict:
+    metadata = await asyncio.to_thread(load_target_upload_metadata)
+    return {"available": metadata["available"], "database": metadata}
+
+
+@app.get("/api/targets/current")
+async def current_targets() -> dict:
+    metadata = await asyncio.to_thread(load_target_upload_metadata)
+    if not metadata["available"]:
+        return {"available": False, "database": metadata, "metrics": [], "rows": []}
+
+    rows = await asyncio.to_thread(load_target_sls_summary)
+    return {
+        "available": bool(rows),
+        "database": metadata,
+        "metrics": metadata.get("metrics", []),
+        "rows": rows,
+    }
+
+
+@app.get("/api/targets/accounts/current")
+async def current_target_accounts(slsName: str = Query(...)) -> dict:
+    name = str(slsName or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="SLS name is required.")
+
+    metadata = await asyncio.to_thread(load_target_upload_metadata)
+    if not metadata["available"]:
+        return {"available": False, "database": metadata, "metrics": [], "rows": []}
+
+    all_rows = await asyncio.to_thread(load_target_accounts)
+    rows = [
+        row
+        for row in all_rows
+        if _matches_name_permutation(row.get("slsName"), name)
+    ]
+    matched_names = sorted({row["slsName"] for row in rows})
+    return {
+        "available": bool(rows),
+        "query": name,
+        "matchedSlsNames": matched_names,
+        "database": metadata,
+        "metrics": metadata.get("metrics", []),
+        "rows": rows,
+    }
+
+
 @app.get("/api/pipeline/summary/current")
 async def current_pipeline_summary(
     slsName: str = Query(...),
@@ -530,6 +583,32 @@ async def upload_slsm_pipeline(
                 "pendingValidationTable": "slsm_pending_validation",
                 "pendingValidationRowsSaved": pending_validation_saved,
             },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/targets/upload")
+async def upload_targets(
+    workbook: UploadFile = File(...),
+    sheetName: str = Form(TARGETS_SHEET),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        parsed = parse_target_pivot(file_bytes, workbook.filename or "", sheetName)
+        metadata = await asyncio.to_thread(
+            replace_target_upload,
+            workbook.filename or "",
+            parsed["sheetName"],
+            parsed["metrics"],
+            parsed["slsRows"],
+            parsed["accountRows"],
+        )
+        return {
+            "available": metadata["available"],
+            "database": metadata,
+            "metrics": parsed["metrics"],
+            "rows": parsed["slsRows"],
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -892,6 +971,7 @@ def _tag_routes_for_swagger() -> None:
         ("/api/slsm/wins-lost/", "SLSM Realized TCV"),
         ("/api/slsm/won-lost/", "SLSM Realized TCV"),
         ("/api/slsm/pending-validation/", "SLSM Realized TCV"),
+        ("/api/targets/", "Targets"),
         ("/api/forecast/", "Forecast"),
         ("/api/pipeline/", "Pipeline"),
         ("/api/wins-lost/", "Realized TCV"),

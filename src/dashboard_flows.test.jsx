@@ -65,6 +65,71 @@ function setupFetch() {
     if (url.includes('/api/slsl/summary/current')) return slslSummaryPayload();
     if (url.includes('/api/slsm/forecast/options/current')) return { available: true, options: ['Alpha Manager'] };
     if (url.includes('/api/slsm/sls-breakdown/current')) return slsBreakdownPayload();
+    if (url.includes('/api/targets/accounts/current')) {
+      return {
+        available: true,
+        matchedSlsNames: ['Seller A', 'Seller A + Seller B'],
+        metrics: ['Rev-ADM', 'TCV-SPE', 'ACV-SPE', 'Rev-SPE', 'TCV-ADM'],
+        rows: [
+          {
+            rowNumber: 5,
+            slsName: 'Seller A',
+            accountName: 'Account A',
+            metrics: { 'TCV-SPE': 8000000, 'ACV-SPE': 7000000, 'Rev-SPE': 4000000, 'Rev-ADM': 1000000, 'TCV-ADM': 8000000 },
+            labels: { 'TCV-SPE': '$8.0M', 'ACV-SPE': '$7.0M', 'Rev-SPE': '$4.0M', 'Rev-ADM': '$1.0M', 'TCV-ADM': '$8.0M' }
+          },
+          {
+            rowNumber: 6,
+            slsName: 'Seller A + Seller B',
+            accountName: 'Combination Account',
+            metrics: { 'TCV-SPE': 5000000, 'ACV-SPE': 3000000, 'Rev-SPE': 2000000, 'Rev-ADM': 500000, 'TCV-ADM': 5000000 },
+            labels: { 'TCV-SPE': '$5.0M', 'ACV-SPE': '$3.0M', 'Rev-SPE': '$2.0M', 'Rev-ADM': '$0.5M', 'TCV-ADM': '$5.0M' }
+          }
+        ]
+      };
+    }
+    if (url.includes('/api/targets/upload')) {
+      return {
+        available: true,
+        database: {
+          available: true,
+          sourceFilename: 'targets.xlsx',
+          sheet: 'SLM-SLS-Pivot',
+          slsCount: 1,
+          accountCount: 1
+        },
+        metrics: ['Rev-ADM', 'TCV-SPE', 'ACV-SPE', 'Rev-SPE', 'TCV-ADM'],
+        rows: [
+          {
+            rowNumber: 4,
+            slsName: 'Seller A',
+            metrics: { 'TCV-SPE': 20000000, 'ACV-SPE': 15000000, 'Rev-SPE': 10000000, 'Rev-ADM': 2000000, 'TCV-ADM': 20000000 },
+            labels: { 'TCV-SPE': '$20.0M', 'ACV-SPE': '$15.0M', 'Rev-SPE': '$10.0M', 'Rev-ADM': '$2.0M', 'TCV-ADM': '$20.0M' }
+          }
+        ]
+      };
+    }
+    if (url.includes('/api/targets/current')) {
+      return {
+        available: true,
+        database: {
+          available: true,
+          sourceFilename: 'saved-targets.xlsb',
+          sheet: 'SLM-SLS-Pivot',
+          slsCount: 1,
+          accountCount: 1
+        },
+        metrics: ['Rev-ADM', 'TCV-SPE', 'ACV-SPE', 'Rev-SPE', 'TCV-ADM'],
+        rows: [
+          {
+            rowNumber: 4,
+            slsName: 'Seller A',
+            metrics: { 'TCV-SPE': 20000000, 'ACV-SPE': 15000000, 'Rev-SPE': 10000000, 'Rev-ADM': 2000000, 'TCV-ADM': 20000000 },
+            labels: { 'TCV-SPE': '$20.0M', 'ACV-SPE': '$15.0M', 'Rev-SPE': '$10.0M', 'Rev-ADM': '$2.0M', 'TCV-ADM': '$20.0M' }
+          }
+        ]
+      };
+    }
     if (url.includes('/metadata')) return { available: true, database: { rowsSaved: 5, sourceFilename: 'saved.xlsx' } };
     return { available: true };
   });
@@ -173,5 +238,39 @@ describe('SalesForecast navigation', () => {
     await user.click(screen.getByRole('button', { name: 'TCV Details' }));
     await user.click(screen.getByRole('button', { name: 'Back TCV' }));
     expect(screen.getByText('Realized TCV Summary CY 2026')).toBeInTheDocument();
+  });
+
+  it('opens Target, replaces uploads and drills into account rows', async () => {
+    setupFetch();
+    const user = userEvent.setup();
+
+    render(<SalesForecast />);
+
+    await user.click(screen.getByRole('button', { name: 'Target' }));
+    expect(await screen.findByRole('heading', { name: /Upload Targets/ })).toBeInTheDocument();
+    expect((await screen.findAllByText('saved-targets.xlsb')).length).toBeGreaterThan(0);
+    expect(screen.getByText('SLS Target Summary')).toBeInTheDocument();
+
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: fileList(new File(['x'], 'bad.txt', { type: 'text/plain' })) }
+    });
+    expect(await screen.findByText('Please select a .xlsb, .xlsx, or .xlsm workbook.')).toBeInTheDocument();
+
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: fileList(new File(['x'], 'targets.xlsx')) }
+    });
+    expect((await screen.findAllByText('targets.xlsx')).length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole('button', { name: 'Seller A' }));
+    expect(await screen.findByText('Seller A Accounts')).toBeInTheDocument();
+    expect(screen.getByText('Account A')).toBeInTheDocument();
+    expect(screen.getByText('Seller A + Seller B')).toBeInTheDocument();
+    expect(screen.getByText('Combination Account')).toBeInTheDocument();
+    const tables = screen.getAllByRole('table');
+    const accountTable = tables[tables.length - 1];
+    const accountHeaders = within(accountTable).getAllByRole('columnheader').map((header) => header.textContent);
+    expect(accountHeaders.slice(0, 4)).toEqual(['Account', 'TCV-SPE', 'ACV-SPE', 'Rev-SPE']);
+    expect(within(accountTable).getByText('Total')).toBeInTheDocument();
+    expect(within(accountTable).getAllByText('$13.0M').length).toBeGreaterThan(0);
   });
 });

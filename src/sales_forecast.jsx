@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import SalesRevenue from './sales_revenue.jsx';
 import SalesRevenueDetails from './sales_revenue_details.jsx';
 import SalesPipeline from './sales_pipeline.jsx';
@@ -9,15 +9,22 @@ import SalesWonLost from './sales_won_lost.jsx';
 import SalesPendingValidation from './sales_pending_validation.jsx';
 import SlsmSummary from './slsm_summary.jsx';
 import SlslSummary from './slsl_summary.jsx';
+import UploadTargets from './upload_targets.jsx';
+import { apiUrl } from './api.js';
 
 const NAV_ITEMS = [
   { id: 'slsl', label: 'SLSL' },
   { id: 'slsm', label: 'SLSM' },
-  { id: 'sls', label: 'SLS' }
+  { id: 'sls', label: 'SLS' },
+  { id: 'targets', label: 'Target' }
 ];
 
 function roundedMillions(value) {
   return Math.round((value / 1000000) * 10) / 10;
+}
+
+function formatMoneyLabel(value) {
+  return '$' + (value / 1000000).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'M';
 }
 
 export default function SalesForecast() {
@@ -32,6 +39,7 @@ export default function SalesForecast() {
   const [pipelineResult, setPipelineResult] = useState(null);
   const [wonLostSummary, setWonLostSummary] = useState(null);
   const [pendingValidationSummary, setPendingValidationSummary] = useState(null);
+  const [targetTcvSummary, setTargetTcvSummary] = useState(null);
   const [matchedSlsNames, setMatchedSlsNames] = useState([]);
   const [pipelineUploadVersion, setPipelineUploadVersion] = useState(0);
   const [forecastWorkbook, setForecastWorkbook] = useState(null);
@@ -42,12 +50,53 @@ export default function SalesForecast() {
   const totalTcvMillions =
     roundedMillions(wonLostSummary?.metrics?.won || 0) +
     roundedMillions(pendingValidationSummary?.metrics?.pendingValidation || 0);
-  const hasSummaryResult = Boolean(revenueSummary || pipelineSummary || wonLostSummary || pendingValidationSummary);
+  const hasSummaryResult = Boolean(revenueSummary || pipelineSummary || wonLostSummary || pendingValidationSummary || targetTcvSummary);
   const hasVisibleSummary =
     (revenueSummary?.forecast || 0) !== 0 ||
     (pipelineSummary?.metrics?.pipeline || 0) !== 0 ||
-    totalTcvMillions !== 0;
+    totalTcvMillions !== 0 ||
+    (targetTcvSummary?.metrics?.targetTcv || 0) !== 0;
   const showNoDataWarning = trimmedSlsName && hasSummaryResult && !hasVisibleSummary;
+
+  useEffect(() => {
+    if (!trimmedSlsName) {
+      setTargetTcvSummary(null);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+
+    async function loadTargetTcv() {
+      try {
+        const response = await fetch(apiUrl(`/api/targets/accounts/current?slsName=${encodeURIComponent(trimmedSlsName)}`), {
+          signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.available) {
+          setTargetTcvSummary(null);
+          return;
+        }
+
+        const targetTcv = (payload.rows || []).reduce((total, row) => total + Number(row?.metrics?.['TCV-SPE'] || 0), 0);
+        setTargetTcvSummary(
+          targetTcv
+            ? {
+                query: trimmedSlsName,
+                metrics: {
+                  targetTcv,
+                  labels: { targetTcv: formatMoneyLabel(targetTcv) }
+                }
+              }
+            : null
+        );
+      } catch (err) {
+        if (err.name !== 'AbortError') setTargetTcvSummary(null);
+      }
+    }
+
+    loadTargetTcv();
+    return () => controller.abort();
+  }, [trimmedSlsName]);
 
   function handleDashboardChange(dashboard) {
     setActiveDashboard(dashboard);
@@ -77,6 +126,7 @@ export default function SalesForecast() {
     setPipelineResult(null);
     setWonLostSummary(null);
     setPendingValidationSummary(null);
+    setTargetTcvSummary(null);
     setMatchedSlsNames([]);
   }
 
@@ -100,6 +150,14 @@ export default function SalesForecast() {
     setActiveDashboard(slsReturnDashboard || 'slsm');
     setSlsReturnDashboard('');
     setCurrentPage('dashboard');
+  }
+
+  if (activeDashboard === 'targets') {
+    return (
+      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
+        <UploadTargets />
+      </DashboardShell>
+    );
   }
 
   if (activeDashboard === 'slsm') {
@@ -223,6 +281,7 @@ export default function SalesForecast() {
             pipelineSummary={pipelineSummary}
             wonLostSummary={wonLostSummary}
             pendingValidationSummary={pendingValidationSummary}
+            targetTcvSummary={targetTcvSummary}
             onRevenueDetailsClick={() => setCurrentPage('revenue-details')}
             onPipelineDetailsClick={() => setCurrentPage('pipeline-details')}
             onTcvDetailsClick={() => setCurrentPage('tcv-details')}
