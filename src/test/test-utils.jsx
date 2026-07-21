@@ -4,7 +4,8 @@ import { vi } from 'vitest';
 export function jsonResponse(payload, ok = true) {
   return Promise.resolve({
     ok,
-    json: () => Promise.resolve(payload)
+    json: () => Promise.resolve(payload),
+    text: () => Promise.resolve(JSON.stringify(payload))
   });
 }
 

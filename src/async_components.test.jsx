@@ -50,17 +50,19 @@ describe('SalesRevenue', () => {
     expect(onResultChange).toHaveBeenCalledWith(expect.objectContaining({ available: true }));
   });
 
-  it('validates selected file type and posts uploaded workbook', async () => {
+  it('validates the file type, uploads immediately, and loads the selected SLS summary', async () => {
     const user = userEvent.setup();
     const onSummaryChange = vi.fn();
     const onWorkbookChange = vi.fn();
     mockFetch((url, options) => {
       if (url.includes('/metadata')) return { available: false };
-      if (options.method === 'POST') return forecastPayload();
-      return { available: false };
+      if (url.includes('/upload') && options.method === 'POST') {
+        return { available: true, database: { rowsSaved: 2, sourceFilename: 'forecast.xlsx' } };
+      }
+      return forecastPayload();
     });
 
-    const { rerender } = render(
+    render(
       <SalesRevenue
         slsName="Seller A"
         runRequestId={0}
@@ -83,20 +85,43 @@ describe('SalesRevenue', () => {
     });
     expect(onWorkbookChange).toHaveBeenCalledWith(workbook);
 
-    rerender(
+    await waitFor(() => expect(onSummaryChange).toHaveBeenCalledWith(expect.objectContaining({ forecast: 1000 })));
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/forecast/upload'),
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('processes a revenue workbook immediately without an SLS selection', async () => {
+    mockFetch((url, options) => {
+      if (url.includes('/metadata')) return { available: false };
+      if (url.includes('/upload') && options.method === 'POST') {
+        return { available: true, database: { rowsSaved: 4, sourceFilename: 'forecast.xlsx' } };
+      }
+      return { available: false };
+    });
+
+    render(
       <SalesRevenue
-        slsName="Seller A"
-        runRequestId={1}
+        slsName=""
+        runRequestId={0}
         onLoadingChange={vi.fn()}
-        onSummaryChange={onSummaryChange}
+        onSummaryChange={vi.fn()}
         onMatchedNamesChange={vi.fn()}
         onResultChange={vi.fn()}
-        onWorkbookChange={onWorkbookChange}
-        externalWorkbook={workbook}
+        onWorkbookChange={vi.fn()}
       />
     );
 
-    await waitFor(() => expect(onSummaryChange).toHaveBeenCalledWith(expect.objectContaining({ forecast: 1000 })));
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: { files: fileList(file('forecast.xlsx')) }
+    });
+
+    await waitFor(() => expect(screen.getByText('4 rows loaded from saved revenue_forecast data')).toBeInTheDocument());
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/forecast/upload'),
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 });
 

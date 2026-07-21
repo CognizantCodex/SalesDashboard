@@ -6,8 +6,8 @@ const ENTITY_CONFIG = {
   sls: {
     label: 'SLS',
     formField: 'slsName',
-    agentUrl: apiUrl('/api/forecast/analyze'),
     currentUrl: apiUrl('/api/forecast/current'),
+    uploadUrl: apiUrl('/api/forecast/upload'),
     metadataUrl: apiUrl('/api/forecast/current/metadata'),
     savedTableLabel: 'saved revenue_forecast data',
     sheetName: 'Data'
@@ -15,13 +15,25 @@ const ENTITY_CONFIG = {
   slsm: {
     label: 'SLSM',
     formField: 'slsmName',
-    agentUrl: apiUrl('/api/slsm/forecast/analyze'),
     currentUrl: apiUrl('/api/slsm/forecast/current'),
+    uploadUrl: apiUrl('/api/slsm/forecast/upload'),
     metadataUrl: apiUrl('/api/slsm/forecast/current/metadata'),
     savedTableLabel: 'saved slsm_revenue_forecast data',
     sheetName: 'SL_Forecast -2026'
   }
 };
+
+async function readApiPayload(response, fallbackMessage) {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (!response.ok) throw new Error(text || fallbackMessage);
+    throw new Error(fallbackMessage);
+  }
+}
 
 const CRC_TABLE = (() => {
   const table = [];
@@ -75,14 +87,14 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       return undefined;
     }
 
-    if (workbook) return undefined;
+    if (!workbook && !savedForecast?.rowsSaved) return undefined;
 
     const timeoutId = window.setTimeout(() => {
       loadStoredForecast(trimmedName, { silent: true });
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [slsName, workbook]);
+  }, [slsName, workbook, savedForecast?.rowsSaved]);
 
   useEffect(() => {
     let ignore = false;
@@ -90,7 +102,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     async function loadSavedForecastMetadata() {
       try {
         const response = await fetch(config.metadataUrl);
-        const payload = await response.json();
+        const payload = await readApiPayload(response, 'Unable to load saved forecast metadata.');
         if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast metadata.');
 
         if (!ignore && payload.available) {
@@ -137,7 +149,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       const params = new URLSearchParams({ [config.formField]: trimmedName });
       const url = config.currentUrl + '?' + params.toString();
       const response = await fetch(url);
-      const payload = await response.json();
+      const payload = await readApiPayload(response, 'Unable to load saved forecast.');
       if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast.');
 
       if (payload.available) {
@@ -161,41 +173,21 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
   }
 
   async function runAgent() {
-    if (!workbook) {
-      await loadStoredForecast(slsName);
-      return;
-    }
+    await loadStoredForecast(slsName);
+  }
 
-    setLoading(true);
-    setError('');
-    setResult(null);
-    onSummaryChange(null);
-    onMatchedNamesChange([]);
-    onResultChange(null);
-
+  async function uploadRevenueWorkbook(file) {
     const formData = new FormData();
-    formData.append('workbook', workbook);
-    formData.append(config.formField, slsName);
+    formData.append('workbook', file);
     formData.append('sheetName', config.sheetName);
 
-    try {
-      const response = await fetch(config.agentUrl, {
-        method: 'POST',
-        body: formData
-      });
-
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || payload.error || 'Forecast agent failed.');
-      setSavedForecast(payload.database);
-      setResult(payload);
-      onSummaryChange(payload.metrics);
-      onMatchedNamesChange(payload.matchedSlsNames || []);
-      onResultChange(payload);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    const response = await fetch(config.uploadUrl, {
+      method: 'POST',
+      body: formData
+    });
+    const payload = await readApiPayload(response, 'Revenue upload failed.');
+    if (!response.ok) throw new Error(payload.detail || payload.error || 'Revenue upload failed.');
+    return payload.database;
   }
 
   function exportExcel() {
@@ -442,7 +434,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     URL.revokeObjectURL(url);
   }
 
-  function selectWorkbook(file, source = 'select') {
+  async function selectWorkbook(file, source = 'select') {
     if (!file) {
       setWorkbook(null);
       setSavedForecast(null);
@@ -468,21 +460,41 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       return;
     }
 
-    setWorkbook(file);
-    setSavedForecast(null);
-    onWorkbookChange?.(file);
+    setLoading(true);
     setError('');
-    setResult(null);
-    onSummaryChange(null);
-    onMatchedNamesChange([]);
-    onResultChange(null);
+
+    try {
+      const database = await uploadRevenueWorkbook(file);
+      setSavedForecast(database);
+      setWorkbook(file);
+      onWorkbookChange?.(file);
+      setResult(null);
+      onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
+    } catch (err) {
+      setWorkbook(null);
+      setSavedForecast(null);
+      onWorkbookChange?.(null);
+      setResult(null);
+      onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const uploadTitle = workbook
     ? workbook.name
     : savedForecast?.sourceFilename || 'Drop your revenue workbook here';
   const uploadSubtitle = workbook
-    ? 'Revenue workbook selected - ready to analyse'
+    ? loading
+      ? 'Processing revenue workbook...'
+      : savedForecast?.rowsSaved
+        ? savedForecast.rowsSaved.toLocaleString() + ' rows loaded from ' + config.savedTableLabel
+        : 'Revenue workbook uploaded and processed'
     : savedForecast?.rowsSaved
       ? savedForecast.rowsSaved.toLocaleString() + ' rows loaded from ' + config.savedTableLabel
       : 'Supports .xlsb and .xlsx - processed by the Python agent';
@@ -495,7 +507,7 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
         title={uploadTitle}
         subtitle={uploadSubtitle}
         icon="revenue"
-        isComplete={Boolean(workbook)}
+        isComplete={Boolean(workbook || savedForecast?.rowsSaved)}
         onFileSelect={selectWorkbook}
       />
 

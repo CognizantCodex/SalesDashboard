@@ -551,6 +551,51 @@ async def upload_pipeline(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/forecast/upload")
+async def upload_forecast(
+    workbook: UploadFile = File(...),
+    sheetName: str = Form("Data"),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
+        rows_saved = await asyncio.to_thread(replace_revenue_forecast, headers, rows, workbook.filename or "")
+        slsm_rows_saved = await _store_slsm_forecast_sheet(file_bytes, workbook.filename or "")
+        return {
+            "available": rows_saved > 0,
+            "database": {
+                "table": "revenue_forecast",
+                "rowsSaved": rows_saved,
+                "sourceFilename": workbook.filename or "",
+                "slsmTable": "slsm_revenue_forecast",
+                "slsmRowsSaved": slsm_rows_saved,
+            },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/slsm/forecast/upload")
+async def upload_slsm_forecast(
+    workbook: UploadFile = File(...),
+    sheetName: str = Form(SLSM_FORECAST_SHEET),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
+        rows_saved = await asyncio.to_thread(replace_slsm_revenue_forecast, headers, rows, workbook.filename or "")
+        return {
+            "available": rows_saved > 0,
+            "database": {
+                "table": "slsm_revenue_forecast",
+                "rowsSaved": rows_saved,
+                "sourceFilename": workbook.filename or "",
+            },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/slsm/pipeline/upload")
 async def upload_slsm_pipeline(
     workbook: UploadFile = File(...),

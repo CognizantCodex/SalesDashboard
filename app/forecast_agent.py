@@ -6,19 +6,17 @@ import re
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
 from openpyxl import load_workbook
-from pyxlsb import open_workbook as open_xlsb_workbook
+from pyxlsb import Workbook as XlsbWorkbook
 
 
-REQUIRED_COLUMNS = [
-    "Practice Area",
-    "Parent Account Name",
-    "FY 26 (SL)",
-    "Target 2026",
-]
+PRACTICE_COLUMNS = ("Practice Area", "Practice")
+REVENUE_ACCOUNT_COLUMNS = ("Parent Account Name", "Financial Ultimate Parent Account", "Account Name")
+FORECAST_AMOUNT_COLUMNS = ("FY 26 (SL)", "CY $", "Current Year Revenue (converted)", "CY REVENUE $")
+TARGET_AMOUNT_COLUMNS = ("Target 2026", "Revenue Target", "Target Revenue", "CY Target")
 
 
 PIPELINE_REQUIRED_COLUMNS = [
@@ -40,7 +38,38 @@ def _get_column(col_map: dict[str, int], *names: str) -> int | None:
     for name in names:
         if name in col_map:
             return col_map[name]
+
+    normalized_map = {
+        _normalize_column_name(column): index
+        for column, index in col_map.items()
+    }
+    for name in names:
+        normalized_name = _normalize_column_name(name)
+        if normalized_name in normalized_map:
+            return normalized_map[normalized_name]
     return None
+
+
+def _get_column_name(col_map: dict[str, int], *names: str) -> str | None:
+    for name in names:
+        if name in col_map:
+            return name
+
+    normalized_map = {
+        _normalize_column_name(column): column
+        for column in col_map
+    }
+    for name in names:
+        normalized_name = _normalize_column_name(name)
+        if normalized_name in normalized_map:
+            return normalized_map[normalized_name]
+    return None
+
+
+def _normalize_column_name(value: str) -> str:
+    text = str(value or "").replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def _get_deal_type_column(col_map: dict[str, int]) -> int | None:
@@ -98,6 +127,16 @@ def _money_label(value: float) -> str:
     return f"${_dollars_to_millions(value):,.1f}M"
 
 
+def _revenue_amount(row: list[Any], column: int | None, column_name: str | None) -> float:
+    if column is None:
+        return 0.0
+
+    amount = _to_number(_cell(row, column))
+    if column_name in {"CY $", "Current Year Revenue (converted)", "CY REVENUE $", "Revenue Target", "Target Revenue", "CY Target"}:
+        return amount / 1000
+    return amount
+
+
 def _pipeline_money_label(value: float) -> str:
     return f"${value / 1_000_000:,.1f}M"
 
@@ -145,23 +184,28 @@ def analyze_forecast_rows(
     if not name:
         raise ValueError(f"{person_column} name is required.")
 
-    missing = [column for column in REQUIRED_COLUMNS if column not in col_map]
     person_column_index = _get_person_column(col_map, person_column)
+    practice_column = _get_column(col_map, *PRACTICE_COLUMNS)
+    account_column = _get_column(col_map, *REVENUE_ACCOUNT_COLUMNS)
+    forecast_column = _get_column(col_map, *FORECAST_AMOUNT_COLUMNS)
+    target_column = _get_column(col_map, *TARGET_AMOUNT_COLUMNS)
+    forecast_column_name = _get_column_name(col_map, *FORECAST_AMOUNT_COLUMNS)
+    target_column_name = _get_column_name(col_map, *TARGET_AMOUNT_COLUMNS)
+    missing = []
     if person_column_index is None:
         missing.append(_person_missing_label(person_column))
+    if practice_column is None:
+        missing.append("Practice Area or Practice")
+    if account_column is None:
+        missing.append("Parent Account Name, Financial Ultimate Parent Account, or Account Name")
+    if forecast_column is None:
+        missing.append("FY 26 (SL), CY $, Current Year Revenue (converted), or CY REVENUE $")
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
-    c_practice = col_map["Practice Area"]
-    c_account = col_map["Parent Account Name"]
     c_source = _get_column(col_map, "P&L Source", "PLSource")
     c_header = _get_column(col_map, "P&L Header", "PLHeader")
-    c_forecast = col_map["FY 26 (SL)"]
-    c_target = col_map["Target 2026"]
-    if c_source is None:
-        raise ValueError("Missing columns: P&L Source or PLSource")
-    if c_header is None:
-        raise ValueError("Missing columns: P&L Header or PLHeader")
+    uses_source_rows = c_source is not None and c_header is not None
 
     forecast: dict[str, float] = defaultdict(float)
     target: dict[str, float] = defaultdict(float)
@@ -175,20 +219,25 @@ def analyze_forecast_rows(
         if not _matches_name_permutation(person_text, name):
             continue
 
-        header = str(_cell(row, c_header) or "").strip()
-        if header != "Net Revenue":
-            continue
-
-        source = str(_cell(row, c_source) or "").strip()
-        account = str(_cell(row, c_account) or "").strip()
-        practice = str(_cell(row, c_practice) or "").strip()
+        account = str(_cell(row, account_column) or "").strip()
+        practice = str(_cell(row, practice_column) or "").strip()
         key = f"{account}__{practice}"
         matched_sls_names.add(person_text)
 
-        if source == "IC/Forecasted":
-            forecast[key] += _to_number(_cell(row, c_forecast))
-        elif source == "Budget":
-            target[key] += _to_number(_cell(row, c_target))
+        if uses_source_rows:
+            header = str(_cell(row, c_header) or "").strip()
+            if header != "Net Revenue":
+                continue
+
+            source = str(_cell(row, c_source) or "").strip()
+            if source == "IC/Forecasted":
+                forecast[key] += _revenue_amount(row, forecast_column, forecast_column_name)
+            elif source == "Budget" and target_column is not None:
+                target[key] += _revenue_amount(row, target_column, target_column_name)
+        else:
+            forecast[key] += _revenue_amount(row, forecast_column, forecast_column_name)
+            if target_column is not None:
+                target[key] += _revenue_amount(row, target_column, target_column_name)
 
     rows = []
     for key in sorted(set(forecast) | set(target)):
@@ -306,8 +355,6 @@ def analyze_pipeline_rows(
         missing.append("Financial Ultimate Parent Account or Account Name")
     if practice_column is None:
         missing.append("Practice Area or Practice")
-    if deal_type_column is None:
-        missing.append("Grouped Deal Type, Group Deal Type, or Deal Type")
     if missing:
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
@@ -346,7 +393,8 @@ def analyze_pipeline_rows(
         amount = _to_number(_cell(row, amount_column))
         account = str(_cell(row, account_column) or "").strip()
         practice = str(_cell(row, practice_column) or "").strip()
-        deal_type = str(_cell(row, deal_type_column) or "").strip() or "Unspecified"
+        deal_type = str(_cell(row, deal_type_column) or "").strip() if deal_type_column is not None else ""
+        deal_type = deal_type or "Unspecified"
         if account:
             accounts.add(account)
         matched_sls_names.add(sls_text)
@@ -894,16 +942,16 @@ def _read_xlsx(file_bytes: bytes, sheet_name: str) -> list[list[Any]]:
 
 
 def _read_xlsb(file_bytes: bytes, sheet_name: str) -> list[list[Any]]:
-    with NamedTemporaryFile(suffix=".xlsb") as tmp:
-        tmp.write(file_bytes)
-        tmp.flush()
+    try:
+        with ZipFile(io.BytesIO(file_bytes), "r") as archive:
+            with XlsbWorkbook(fp=archive) as workbook:
+                if sheet_name not in workbook.sheets:
+                    raise ValueError(f'Sheet "{sheet_name}" not found in workbook.')
 
-        with open_xlsb_workbook(tmp.name) as workbook:
-            if sheet_name not in workbook.sheets:
-                raise ValueError(f'Sheet "{sheet_name}" not found in workbook.')
-
-            with workbook.get_sheet(sheet_name) as sheet:
-                return [[cell.v for cell in row] for row in sheet.rows()]
+                with workbook.get_sheet(sheet_name) as sheet:
+                    return [[cell.v for cell in row] for row in sheet.rows()]
+    except (BadZipFile, OSError) as exc:
+        raise ValueError(f"Unable to read .xlsb workbook: {exc}") from exc
 
 
 def _is_target_account_group_label(value: str) -> bool:

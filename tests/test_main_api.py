@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app import forecast_agent
-from app.forecast_agent import analyze_pipeline_rows, parse_target_pivot
+from app.forecast_agent import analyze_forecast_rows, analyze_pipeline_rows, parse_target_pivot
 
 
 client = TestClient(main.app)
@@ -376,6 +376,65 @@ def test_pipeline_accepts_group_deal_type_header_variant():
     assert result["rows"][0]["dealType"] == "New"
 
 
+def test_forecast_accepts_report_style_revenue_columns_without_target():
+    headers = [
+        "SLS",
+        "Practice",
+        "Financial Ultimate Parent Account",
+        "CY $",
+    ]
+    rows = [["Seller A", "QEA", "Account 1", 400_000]]
+    col_map = {header: index for index, header in enumerate(headers)}
+
+    result = analyze_forecast_rows(rows, col_map, "Seller A")
+
+    assert result["metrics"]["forecast"] == 400
+    assert result["metrics"]["target"] == 0
+    assert result["accounts"][0]["account"] == "Account 1"
+    assert result["accounts"][0]["practices"][0]["practice"] == "QEA"
+
+
+def test_forecast_accepts_wrapped_excel_revenue_headers():
+    headers = [
+        "SLS",
+        "Practice Area",
+        "Parent\nAccount Name",
+        "P&L Source",
+        "P&L Header",
+        "FY 26\n(SL)",
+        "Target\u00a02026",
+    ]
+    rows = [
+        ["Seller A", "Cloud", "Account 1", "IC/Forecasted", "Net Revenue", 1000, 0],
+        ["Seller A", "Cloud", "Account 1", "Budget", "Net Revenue", 0, 1500],
+    ]
+    col_map = {header: index for index, header in enumerate(headers)}
+
+    result = analyze_forecast_rows(rows, col_map, "Seller A")
+
+    assert result["metrics"]["forecast"] == 1000
+    assert result["metrics"]["target"] == 1500
+    assert result["accounts"][0]["account"] == "Account 1"
+
+
+def test_pipeline_allows_missing_deal_type_column():
+    headers = [
+        "SLS",
+        "Grouped Sales Stage",
+        "EDC Year",
+        "Net TCV Share",
+        "Financial Ultimate Parent Account",
+        "Practice Area",
+    ]
+    rows = [["Seller A", "Qualified", 2026, 1_000_000, "Account 1", "Cloud"]]
+    col_map = {header: index for index, header in enumerate(headers)}
+
+    result = analyze_pipeline_rows(rows, col_map, "Seller A", 2026)
+
+    assert result["metrics"]["pipeline"] == 1_000_000
+    assert result["rows"][0]["dealType"] == "Unspecified"
+
+
 def test_value_errors_are_returned_as_400(patched_storage, monkeypatch):
     def fail(*args, **kwargs):
         raise ValueError("bad workbook")
@@ -415,6 +474,11 @@ def test_parse_based_post_endpoints(monkeypatch, patched_analyzers):
     monkeypatch.setattr(main, "result_to_csv", lambda result: "account,forecast\nA,1\n")
 
     assert client.post("/api/slsm/forecast/options", files=upload_file()).json()["options"] == ["Alpha Manager", "Beta Manager"]
+    forecast_upload = client.post("/api/forecast/upload", files=upload_file()).json()
+    assert forecast_upload["database"]["rowsSaved"] == len(PIPELINE_ROWS)
+    assert forecast_upload["database"]["slsmRowsSaved"] == len(FORECAST_ROWS)
+    slsm_forecast_upload = client.post("/api/slsm/forecast/upload", files=upload_file()).json()
+    assert slsm_forecast_upload["database"]["table"] == "slsm_revenue_forecast"
     assert client.post("/api/pipeline/upload", files=upload_file()).json()["database"]["rowsSaved"] == len(PIPELINE_ROWS)
     assert client.post("/api/slsm/pipeline/upload", files=upload_file()).json()["database"]["table"] == "slsm_pipeline_upload"
     assert client.post("/api/pipeline/summary", data={"slsName": "Seller A"}, files=upload_file()).json()["metrics"]["pipeline"] == 1_000_000
@@ -436,6 +500,8 @@ def test_parse_errors_on_post_endpoints(monkeypatch):
 
     post_cases = [
         ("/api/slsm/forecast/options", {}),
+        ("/api/forecast/upload", {}),
+        ("/api/slsm/forecast/upload", {}),
         ("/api/pipeline/upload", {}),
         ("/api/slsm/pipeline/upload", {}),
         ("/api/pipeline/summary", {"slsName": "Seller A"}),
