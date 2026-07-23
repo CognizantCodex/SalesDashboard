@@ -150,11 +150,11 @@ def _revenue_rows_for_slsm(
     forecast_headers: list[str],
     forecast_rows: list[list],
 ) -> tuple[list[str], list[list], str]:
-    """Prefer the SLSM pivot where it has the manager, otherwise use saved revenue."""
-    pivot_matches = _filter_rows_by_person(pivot_rows, pivot_headers, slsm_name, "SLSM")
-    if pivot_matches:
-        return pivot_headers, pivot_rows, "slsm_revenue_forecast"
-    return forecast_headers, forecast_rows, "revenue_forecast"
+    """Use detailed revenue rows; the SLSM pivot is only a fallback source."""
+    forecast_matches = _filter_rows_by_person(forecast_rows, forecast_headers, slsm_name, "SLSM")
+    if forecast_matches:
+        return forecast_headers, forecast_rows, "revenue_forecast"
+    return pivot_headers, pivot_rows, "slsm_revenue_forecast"
 
 
 @app.get("/health")

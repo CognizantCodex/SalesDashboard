@@ -313,7 +313,7 @@ def test_current_forecast_and_options_endpoints(patched_storage, patched_analyze
 
     response = client.get("/api/slsm/forecast/current", params={"slsmName": "Alpha Manager"})
     assert response.status_code == 200
-    assert response.json()["database"]["table"] == "slsm_revenue_forecast"
+    assert response.json()["database"]["table"] == "revenue_forecast"
 
     response = client.get("/api/slsm/forecast/options/current")
     assert response.status_code == 200
@@ -615,8 +615,12 @@ def test_slsm_pivot_rows_are_normalized_for_options_and_slsl_revenue(patched_sto
     assert options["options"] == ["Alpha Manager", "Beta Manager"]
 
     summary = client.get("/api/slsl/summary/current", params={"currentYear": 2026}).json()
-    assert summary["rows"][0]["revenue"]["forecast"] == 2_000
-    assert summary["rows"][0]["revenue"]["target"] == 2_500
+    assert summary["rows"][0]["revenue"]["forecast"] == 3_000
+    assert summary["rows"][0]["revenue"]["target"] == 4_000
+
+    forecast = client.get("/api/slsm/forecast/current", params={"slsmName": "Alpha Manager"}).json()
+    assert forecast["database"]["table"] == "revenue_forecast"
+    assert forecast["metrics"]["forecast"] == 3_000
 
 
 def test_slsm_uses_saved_revenue_when_the_pivot_omits_a_manager(patched_storage, monkeypatch):
@@ -644,6 +648,7 @@ def test_slsm_breakdown_requires_name_and_handles_missing_child_columns(patched_
     headers = [header for header in FORECAST_HEADERS if header != "SLS"]
     rows = [[cell for index, cell in enumerate(row) if FORECAST_HEADERS[index] != "SLS"] for row in FORECAST_ROWS]
     monkeypatch.setattr(main, "load_slsm_revenue_forecast", lambda: (headers, rows, "no-sls.xlsx"))
+    monkeypatch.setattr(main, "load_revenue_forecast", lambda: (headers, rows, "no-sls.xlsx"))
     monkeypatch.setattr(main, "load_slsm_pipeline_upload", lambda: ([], [], None))
     monkeypatch.setattr(main, "load_pipeline_upload", lambda: ([], [], None))
     response = client.get("/api/slsm/sls-breakdown/current", params={"slsmName": "Alpha Manager"})
