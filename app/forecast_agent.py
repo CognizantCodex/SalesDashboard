@@ -15,8 +15,8 @@ from pyxlsb import Workbook as XlsbWorkbook
 
 PRACTICE_COLUMNS = ("Practice Area", "Practice")
 REVENUE_ACCOUNT_COLUMNS = ("Parent Account Name", "Financial Ultimate Parent Account", "Account Name")
-FORECAST_AMOUNT_COLUMNS = ("FY 26 (SL)", "CY $", "Current Year Revenue (converted)", "CY REVENUE $")
-TARGET_AMOUNT_COLUMNS = ("Target 2026", "Revenue Target", "Target Revenue", "CY Target")
+FORECAST_AMOUNT_COLUMNS = ("FY 26 (SL)", "SL_FY'26", "SL FY'26", "CY $", "Current Year Revenue (converted)", "CY REVENUE $")
+TARGET_AMOUNT_COLUMNS = ("Target 2026", "Target-2026", "Revenue Target", "Target Revenue", "CY Target")
 
 
 PIPELINE_REQUIRED_COLUMNS = [
@@ -137,6 +137,66 @@ def _revenue_amount(row: list[Any], column: int | None, column_name: str | None)
     return amount
 
 
+def normalize_slsm_forecast_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list[str], list[list[Any]]]:
+    """Extract the usable rows from the SLSM pivot sheet.
+
+    The source workbook places the real header (SLSM, SLS, Parent Account,
+    and revenue columns) below several pivot/filter rows. Older uploads were
+    stored with generic Column N headers, so this also repairs them in memory.
+    """
+    header_row_index = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if _get_row_header_index(row, "SLSM") is not None
+            and _get_row_header_index(row, "SLS") is not None
+        ),
+        None,
+    )
+    if header_row_index is None:
+        return headers, rows
+
+    extracted_headers = [
+        str(cell).strip() if cell is not None and str(cell).strip() else f"Column {index + 1}"
+        for index, cell in enumerate(rows[header_row_index])
+    ]
+    slsm_index = _get_row_header_index(extracted_headers, "SLSM")
+    sls_index = _get_row_header_index(extracted_headers, "SLS")
+    if slsm_index is None or sls_index is None:
+        return headers, rows
+
+    normalized_rows: list[list[Any]] = []
+    active_slsm = ""
+    for source_row in rows[header_row_index + 1 :]:
+        row = list(source_row[: len(extracted_headers)])
+        row.extend([None] * (len(extracted_headers) - len(row)))
+
+        slsm_value = str(_cell(row, slsm_index) or "").strip()
+        sls_value = str(_cell(row, sls_index) or "").strip()
+        if slsm_value.lower() == "grand total" or slsm_value.lower().endswith(" total") or sls_value.lower().endswith(" total"):
+            continue
+        if slsm_value:
+            active_slsm = slsm_value
+        elif active_slsm:
+            row[slsm_index] = active_slsm
+
+        if not any(cell not in (None, "") for cell in row):
+            continue
+        if not str(_cell(row, slsm_index) or "").strip() and not sls_value:
+            continue
+        normalized_rows.append(row)
+
+    return extracted_headers, normalized_rows
+
+
+def _get_row_header_index(row: list[Any], name: str) -> int | None:
+    normalized_name = _normalize_column_name(name)
+    for index, cell in enumerate(row):
+        if _normalize_column_name(str(cell or "")) == normalized_name:
+            return index
+    return None
+
+
 def _pipeline_money_label(value: float) -> str:
     return f"${value / 1_000_000:,.1f}M"
 
@@ -194,8 +254,6 @@ def analyze_forecast_rows(
     missing = []
     if person_column_index is None:
         missing.append(_person_missing_label(person_column))
-    if practice_column is None:
-        missing.append("Practice Area or Practice")
     if account_column is None:
         missing.append("Parent Account Name, Financial Ultimate Parent Account, or Account Name")
     if forecast_column is None:
@@ -236,7 +294,7 @@ def analyze_forecast_rows(
         if not _matches_name_permutation(person_text, name) and not participant_match:
             continue
 
-        practice = str(_cell(row, practice_column) or "").strip()
+        practice = str(_cell(row, practice_column) or "").strip() or "Unassigned"
         key = f"{account}__{practice}"
         matched_sls_names.add(person_text)
 
@@ -787,6 +845,12 @@ def parse_workbook(file_bytes: bytes, filename: str, sheet_name: str = "Data") -
     if len(values) < 2:
         raise ValueError(f"{sheet_name} sheet appears empty.")
 
+    if sheet_name == SLSM_FORECAST_SHEET:
+        headers, rows = normalize_slsm_forecast_rows([], values)
+        if headers and rows:
+            col_map = {header: index for index, header in enumerate(headers) if header}
+            return headers, rows, col_map
+
     headers = [str(header).strip() if header is not None and str(header).strip() else f"Column {index + 1}" for index, header in enumerate(values[0])]
     col_map = {header: index for index, header in enumerate(headers) if header}
     return headers, values[1:], col_map
@@ -1083,5 +1147,5 @@ def _target_accounts_from_data_sheet(file_bytes: bytes, filename: str, metrics: 
     return account_rows
 
 
-def _cell(row: list[Any], index: int) -> Any:
-    return row[index] if index < len(row) else None
+def _cell(row: list[Any], index: int | None) -> Any:
+    return row[index] if index is not None and index < len(row) else None

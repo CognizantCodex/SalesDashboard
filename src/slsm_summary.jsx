@@ -37,7 +37,7 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
   const [slsBreakdownRows, setSlsBreakdownRows] = useState([]);
   const [slsBreakdownError, setSlsBreakdownError] = useState('');
   const [isLoadingSlsBreakdown, setIsLoadingSlsBreakdown] = useState(false);
-  const showSlsmSelector = Boolean(forecastWorkbook) || slsmOptions.length > 0 || isLoadingOptions;
+  const showSlsmSelector = Boolean(forecastWorkbook) || slsmOptions.length > 0 || isLoadingOptions || Boolean(optionsError);
   const trimmedSlsmName = slsmName.trim();
   const totalTcvMillions =
     roundedMillions(wonLostSummary?.metrics?.won || 0) +

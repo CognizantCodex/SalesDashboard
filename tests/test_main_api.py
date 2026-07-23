@@ -596,6 +596,48 @@ def test_build_slsl_and_slsm_breakdown_use_real_aggregators(patched_storage):
     assert breakdown["rows"][1]["realizedTcv"]["pendingValidation"] == 4_000_000
 
 
+def test_slsm_pivot_rows_are_normalized_for_options_and_slsl_revenue(patched_storage, monkeypatch):
+    headers = [f"Column {index}" for index in range(1, 8)]
+    rows = [
+        [None] * 7,
+        ["SLSM", "SLS", "Parent Account Name", "Practice Area", "SL_FY'26", "Target-2026", "FY'26-Gap SL"],
+        ["Alpha Manager", "Seller A", "Account A", None, 1_200, 1_500, 300],
+        [None, "Seller B", "Account B", None, 800, 1_000, 200],
+        ["Alpha Manager Total", None, None, None, 2_000, 2_500, 500],
+        ["Grand Total", None, None, None, 2_000, 2_500, 500],
+    ]
+    monkeypatch.setattr(main, "load_slsm_revenue_forecast", lambda: (headers, rows, "pivot.xlsx"))
+    monkeypatch.setattr(main, "load_slsm_pipeline_upload", lambda: ([], [], None))
+    monkeypatch.setattr(main, "load_pipeline_upload", lambda: ([], [], None))
+
+    options = client.get("/api/slsm/forecast/options/current").json()
+    assert options["available"] is True
+    assert options["options"] == ["Alpha Manager", "Beta Manager"]
+
+    summary = client.get("/api/slsl/summary/current", params={"currentYear": 2026}).json()
+    assert summary["rows"][0]["revenue"]["forecast"] == 2_000
+    assert summary["rows"][0]["revenue"]["target"] == 2_500
+
+
+def test_slsm_uses_saved_revenue_when_the_pivot_omits_a_manager(patched_storage, monkeypatch):
+    pivot_headers = ["SLSM", "SLS", "Parent Account Name", "SL_FY'26", "Target-2026"]
+    pivot_rows = [["Alpha Manager", "Seller A", "Account A", 1_000, 1_500]]
+    monkeypatch.setattr(main, "load_slsm_revenue_forecast", lambda: (pivot_headers, pivot_rows, "pivot.xlsx"))
+    monkeypatch.setattr(main, "load_slsm_pipeline_upload", lambda: ([], [], None))
+    monkeypatch.setattr(main, "load_pipeline_upload", lambda: ([], [], None))
+
+    options = client.get("/api/slsm/forecast/options/current").json()
+    assert options["options"] == ["Alpha Manager", "Beta Manager"]
+
+    summary = client.get("/api/slsl/summary/current", params={"currentYear": 2026}).json()
+    beta = next(row for row in summary["rows"] if row["slsmName"] == "Beta Manager")
+    assert beta["revenue"]["forecast"] == 3_000
+
+    forecast = client.get("/api/slsm/forecast/current", params={"slsmName": "Beta Manager"}).json()
+    assert forecast["database"]["table"] == "revenue_forecast"
+    assert forecast["metrics"]["forecast"] == 3_000
+
+
 def test_slsm_breakdown_requires_name_and_handles_missing_child_columns(patched_storage, monkeypatch):
     assert client.get("/api/slsm/sls-breakdown/current", params={"slsmName": ""}).status_code == 400
 
@@ -607,6 +649,34 @@ def test_slsm_breakdown_requires_name_and_handles_missing_child_columns(patched_
     response = client.get("/api/slsm/sls-breakdown/current", params={"slsmName": "Alpha Manager"})
     assert response.status_code == 200
     assert response.json()["rows"] == []
+
+
+def test_slsm_breakdown_does_not_duplicate_combined_sls_assignments(monkeypatch):
+    revenue_headers = ["SLSM", "SLS", "Practice Area", "Parent Account Name", "FY 26 (SL)", "Target 2026"]
+    revenue_rows = [
+        ["Alpha Manager", "Seller A", "Cloud", "Account A", 1_000, 1_200],
+        ["Alpha Manager", "Seller A + Seller B", "Cloud", "Account B", 2_000, 2_100],
+        ["Alpha Manager", "Seller B", "Cloud", "Account C", 3_000, 3_100],
+    ]
+    pipeline_rows = [
+        ["Alpha Manager", "Seller A", "Won", 2026, 1_000_000, "Account A", "Cloud", "New", "", "yes", "", 2026],
+        ["Alpha Manager", "Seller A + Seller B", "Won", 2026, 2_000_000, "Account B", "Cloud", "New", "", "yes", "", 2026],
+        ["Alpha Manager", "Seller B", "Won", 2026, 3_000_000, "Account C", "Cloud", "New", "", "yes", "", 2026],
+    ]
+    monkeypatch.setattr(main, "load_slsm_revenue_forecast", lambda: (revenue_headers, revenue_rows, "revenue.xlsx"))
+    monkeypatch.setattr(main, "load_revenue_forecast", lambda: (revenue_headers, revenue_rows, "revenue.xlsx"))
+    monkeypatch.setattr(main, "load_slsm_pipeline_upload", lambda: (PIPELINE_HEADERS, pipeline_rows, "pipeline.xlsx"))
+    monkeypatch.setattr(main, "load_pipeline_upload", lambda: (PIPELINE_HEADERS, pipeline_rows, "pipeline.xlsx"))
+
+    summary = client.get("/api/slsl/summary/current", params={"currentYear": 2026}).json()["rows"][0]
+    breakdown = client.get(
+        "/api/slsm/sls-breakdown/current",
+        params={"slsmName": "Alpha Manager", "currentYear": 2026},
+    ).json()
+
+    assert sum(row["revenue"]["target"] for row in breakdown["rows"]) == summary["revenue"]["target"]
+    assert sum(row["realizedTcv"]["total"] for row in breakdown["rows"]) == summary["realizedTcv"]["total"]
+    assert sum(row["realizedTcv"]["won"] for row in breakdown["rows"]) == summary["realizedTcv"]["won"]
 
 
 def test_private_helpers():
