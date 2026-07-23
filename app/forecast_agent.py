@@ -207,6 +207,18 @@ def analyze_forecast_rows(
     c_header = _get_column(col_map, "P&L Header", "PLHeader")
     uses_source_rows = c_source is not None and c_header is not None
 
+    # A revenue account can use a combined SLS assignment for budget rows but
+    # an individual SLS assignment for forecast rows. Build the matching
+    # participants per account first, so a partial search such as "som" can
+    # include the associated forecast owner without including that owner's
+    # unrelated accounts.
+    account_participants: dict[str, set[str]] = defaultdict(set)
+    for row in data_rows:
+        person_text = str(_cell(row, person_column_index) or "").strip()
+        account = str(_cell(row, account_column) or "").strip()
+        if account and person_text and _matches_name_permutation(person_text, name):
+            account_participants[account].update(_split_combined_name(person_text))
+
     forecast: dict[str, float] = defaultdict(float)
     target: dict[str, float] = defaultdict(float)
     matched_sls_names: set[str] = set()
@@ -216,10 +228,14 @@ def analyze_forecast_rows(
             continue
 
         person_text = str(person_value).strip()
-        if not _matches_name_permutation(person_text, name):
+        account = str(_cell(row, account_column) or "").strip()
+        participant_match = any(
+            _matches_name_permutation(person_text, participant)
+            for participant in account_participants.get(account, set())
+        )
+        if not _matches_name_permutation(person_text, name) and not participant_match:
             continue
 
-        account = str(_cell(row, account_column) or "").strip()
         practice = str(_cell(row, practice_column) or "").strip()
         key = f"{account}__{practice}"
         matched_sls_names.add(person_text)
@@ -725,12 +741,27 @@ def _matches_name_permutation(value: Any, query: str) -> bool:
     if normalized_query and normalized_query in normalized_value:
         return True
 
-    tokens = _name_tokens(query)
-    if not tokens:
-        return False
+    value_candidates = _split_combined_name(value_text)
+    query_candidates = _split_combined_name(query)
+    return any(
+        all(token in _normalize_name(value_candidate) for token in _name_tokens(query_candidate))
+        for value_candidate in value_candidates
+        for query_candidate in query_candidates
+        if _name_tokens(query_candidate)
+    )
 
-    candidates = [value_text, *re.split(r"\s*\+\s*", value_text)]
-    return any(all(token in _normalize_name(candidate) for token in tokens) for candidate in candidates)
+
+def _split_combined_name(value: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+
+    # Forecast workbooks may assign the forecast to an individual SLS while
+    # assigning budget to a combined SLS label, e.g. "Ali, Afzal - Das,Somnath".
+    # Treat the individual names as candidates so both rows remain in the same
+    # revenue result.
+    parts = [part.strip() for part in re.split(r"\s*(?:\+|\s+-\s+)\s*", text) if part.strip()]
+    return [text, *parts]
 
 
 def _name_tokens(value: str) -> list[str]:

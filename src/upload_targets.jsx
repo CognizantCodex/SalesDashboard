@@ -46,6 +46,7 @@ function totalRow(rows, metrics) {
 function TargetDataTable({ title, firstColumn, rows, metrics, onNameClick, matchedNames = [] }) {
   const displayMetrics = orderedMetrics(metrics);
   const totals = totalRow(rows, displayMetrics);
+  const showSbu = !onNameClick && rows.some((row) => row.groupName);
 
   return (
     <section className="table-wrap target-table-wrap">
@@ -62,6 +63,7 @@ function TargetDataTable({ title, firstColumn, rows, metrics, onNameClick, match
           <thead>
             <tr>
               <th>{firstColumn}</th>
+              {showSbu && <th>SBU</th>}
               {displayMetrics.map((metric) => <th key={metric}>{metric}</th>)}
             </tr>
           </thead>
@@ -79,6 +81,7 @@ function TargetDataTable({ title, firstColumn, rows, metrics, onNameClick, match
                       <span className="target-account-name">{row.accountName}</span>
                     )}
                   </td>
+                  {showSbu && <td>{row.groupName || '-'}</td>}
                   {displayMetrics.map((metric) => <td key={metric}>{metricLabel(row, metric)}</td>)}
                 </tr>
               );
@@ -88,6 +91,7 @@ function TargetDataTable({ title, firstColumn, rows, metrics, onNameClick, match
             <tfoot>
               <tr>
                 <td>Total</td>
+                {showSbu && <td />}
                 {displayMetrics.map((metric) => <td key={metric}>{metricLabel(totals, metric)}</td>)}
               </tr>
             </tfoot>

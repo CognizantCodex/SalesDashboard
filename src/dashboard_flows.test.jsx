@@ -75,6 +75,7 @@ function setupFetch() {
             rowNumber: 5,
             slsName: 'Seller A',
             accountName: 'Account A',
+            groupName: 'S1.917-US Bank',
             metrics: { 'TCV-SPE': 8000000, 'ACV-SPE': 7000000, 'Rev-SPE': 4000000, 'Rev-ADM': 1000000, 'TCV-ADM': 8000000 },
             labels: { 'TCV-SPE': '$8.0M', 'ACV-SPE': '$7.0M', 'Rev-SPE': '$4.0M', 'Rev-ADM': '$1.0M', 'TCV-ADM': '$8.0M' }
           },
@@ -82,6 +83,7 @@ function setupFetch() {
             rowNumber: 6,
             slsName: 'Seller A + Seller B',
             accountName: 'Combination Account',
+            groupName: 'S1.912-JPMC',
             metrics: { 'TCV-SPE': 5000000, 'ACV-SPE': 3000000, 'Rev-SPE': 2000000, 'Rev-ADM': 500000, 'TCV-ADM': 5000000 },
             labels: { 'TCV-SPE': '$5.0M', 'ACV-SPE': '$3.0M', 'Rev-SPE': '$2.0M', 'Rev-ADM': '$0.5M', 'TCV-ADM': '$5.0M' }
           }
@@ -264,12 +266,14 @@ describe('SalesForecast navigation', () => {
     await user.click(screen.getByRole('button', { name: 'Seller A' }));
     expect(await screen.findByText('Seller A Accounts')).toBeInTheDocument();
     expect(screen.getByText('Account A')).toBeInTheDocument();
+    expect(screen.getByText('S1.917-US Bank')).toBeInTheDocument();
     expect(screen.getByText('Seller A + Seller B')).toBeInTheDocument();
     expect(screen.getByText('Combination Account')).toBeInTheDocument();
+    expect(screen.getByText('S1.912-JPMC')).toBeInTheDocument();
     const tables = screen.getAllByRole('table');
     const accountTable = tables[tables.length - 1];
     const accountHeaders = within(accountTable).getAllByRole('columnheader').map((header) => header.textContent);
-    expect(accountHeaders.slice(0, 4)).toEqual(['Account', 'TCV-SPE', 'ACV-SPE', 'Rev-SPE']);
+    expect(accountHeaders.slice(0, 5)).toEqual(['Account', 'SBU', 'TCV-SPE', 'ACV-SPE', 'Rev-SPE']);
     expect(within(accountTable).getByText('Total')).toBeInTheDocument();
     expect(within(accountTable).getAllByText('$13.0M').length).toBeGreaterThan(0);
   });

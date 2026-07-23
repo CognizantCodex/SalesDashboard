@@ -417,6 +417,54 @@ def test_forecast_accepts_wrapped_excel_revenue_headers():
     assert result["accounts"][0]["account"] == "Account 1"
 
 
+def test_forecast_includes_individual_revenue_for_combined_sls_assignment():
+    headers = [
+        "SLS",
+        "Practice Area",
+        "Parent Account Name",
+        "P&L Source",
+        "P&L Header",
+        "FY 26 (SL)",
+        "Target 2026",
+    ]
+    rows = [
+        ["Ali, Afzal", "Cloud", "U.S.BANCORP", "IC/Forecasted", "Net Revenue", 98_650, 0],
+        ["Ali, Afzal - Das,Somnath", "Cloud", "U.S.BANCORP", "Budget", "Net Revenue", 0, 100_640],
+    ]
+    col_map = {header: index for index, header in enumerate(headers)}
+
+    result = analyze_forecast_rows(rows, col_map, "Ali, Afzal - Das,Somnath")
+
+    assert result["matchedSlsNames"] == ["Ali, Afzal", "Ali, Afzal - Das,Somnath"]
+    assert result["metrics"]["forecast"] == 98_650
+    assert result["metrics"]["target"] == 100_640
+    assert result["accounts"][0]["account"] == "U.S.BANCORP"
+
+
+def test_forecast_partial_sls_search_includes_same_account_combined_assignment():
+    headers = [
+        "SLS",
+        "Practice Area",
+        "Parent Account Name",
+        "P&L Source",
+        "P&L Header",
+        "FY 26 (SL)",
+        "Target 2026",
+    ]
+    rows = [
+        ["Ali, Afzal", "Cloud", "U.S.BANCORP", "IC/Forecasted", "Net Revenue", 98_650, 0],
+        ["Ali, Afzal - Das,Somnath", "Cloud", "U.S.BANCORP", "Budget", "Net Revenue", 0, 100_640],
+        ["Ali, Afzal", "Cloud", "Unrelated Account", "IC/Forecasted", "Net Revenue", 12_000, 0],
+    ]
+    col_map = {header: index for index, header in enumerate(headers)}
+
+    result = analyze_forecast_rows(rows, col_map, "som")
+
+    assert result["metrics"]["forecast"] == 98_650
+    assert result["metrics"]["target"] == 100_640
+    assert [account["account"] for account in result["accounts"]] == ["U.S.BANCORP"]
+
+
 def test_pipeline_allows_missing_deal_type_column():
     headers = [
         "SLS",
