@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      SALES_DASHBOARD_DB_PATH: /data/sales_dashboard.db
+    volumes:
+      - sales-dashboard-data:/data
+    expose:
+      - "3001"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "${FRONTEND_PORT:-8090}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  sales-dashboard-data:

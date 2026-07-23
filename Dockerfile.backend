@@ -1,0 +1,18 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV SALES_DASHBOARD_DB_PATH=/data/sales_dashboard.db
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+
+RUN mkdir -p /data
+
+EXPOSE 3001
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3001"]
