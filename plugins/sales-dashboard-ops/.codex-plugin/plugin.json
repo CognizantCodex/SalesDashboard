@@ -1,0 +1,22 @@
+{
+  "name": "sales-dashboard-ops",
+  "version": "1.0.0",
+  "description": "Run, maintain, test, deploy, and document the Sales Dashboard.",
+  "author": {
+    "name": "Sales Dashboard Team"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Sales Dashboard Ops",
+    "shortDescription": "Operate and deploy the Sales Dashboard.",
+    "longDescription": "Provides repeatable Codex workflows to start, restart, test, deploy, and document the Sales Dashboard for a team.",
+    "developerName": "Sales Dashboard Team",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": [
+      "Start the Sales Dashboard on port 8090.",
+      "Restart the Sales Dashboard backend and frontend.",
+      "Generate Sales Dashboard deployment instructions."
+    ]
+  }
+}
