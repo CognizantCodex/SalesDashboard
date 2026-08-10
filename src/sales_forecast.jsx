@@ -10,13 +10,15 @@ import SalesPendingValidation from './sales_pending_validation.jsx';
 import SlsmSummary from './slsm_summary.jsx';
 import SlslSummary from './slsl_summary.jsx';
 import UploadTargets from './upload_targets.jsx';
+import DemandCreation from './demand_creation.jsx';
 import { apiUrl } from './api.js';
 
 const NAV_ITEMS = [
   { id: 'slsl', label: 'SLSL' },
   { id: 'slsm', label: 'SLSM' },
   { id: 'sls', label: 'SLS' },
-  { id: 'targets', label: 'Target' }
+  { id: 'targets', label: 'Target' },
+  { id: 'demand-creation', label: 'Demand Creation' }
 ];
 
 function roundedMillions(value) {
@@ -156,6 +158,14 @@ export default function SalesForecast() {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
         <UploadTargets />
+      </DashboardShell>
+    );
+  }
+
+  if (activeDashboard === 'demand-creation') {
+    return (
+      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
+        <DemandCreation />
       </DashboardShell>
     );
   }

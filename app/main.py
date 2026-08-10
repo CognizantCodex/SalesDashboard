@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from .database import (
+    load_demand_creation_upload,
     load_pending_validation_metadata,
     load_pipeline_upload,
     load_pipeline_upload_metadata,
@@ -27,6 +28,7 @@ from .database import (
     load_target_upload_metadata,
     load_wins_lost_metadata,
     replace_pending_validation,
+    replace_demand_creation_upload,
     replace_pipeline_upload,
     replace_revenue_forecast,
     replace_slsm_pending_validation,
@@ -36,7 +38,7 @@ from .database import (
     replace_target_upload,
     replace_wins_lost,
 )
-from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
 
 
 OPENAPI_TAGS = [
@@ -50,6 +52,7 @@ OPENAPI_TAGS = [
     {"name": "Realized TCV", "description": "Won/lost and pending validation APIs."},
     {"name": "SLSM Realized TCV", "description": "SLSM won/lost and pending validation APIs."},
     {"name": "Targets", "description": "Target workbook upload and SLS account target APIs."},
+    {"name": "Demand Creation", "description": "Weekly BCM and INS 2 demand creation reporting APIs."},
 ]
 
 
@@ -676,6 +679,31 @@ async def upload_targets(
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/demand-creation/upload", tags=["Demand Creation"])
+async def upload_demand_creation(workbook: UploadFile = File(...)) -> dict:
+    try:
+        parsed = await asyncio.to_thread(
+            parse_demand_creation_workbook,
+            await workbook.read(),
+            workbook.filename or "",
+        )
+        source_filename = workbook.filename or ""
+        metadata = await asyncio.to_thread(replace_demand_creation_upload, source_filename, parsed)
+        return {
+            "available": metadata["available"],
+            "sourceFilename": source_filename,
+            "database": metadata,
+            **parsed,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/demand-creation/current", tags=["Demand Creation"])
+async def current_demand_creation() -> dict:
+    return await asyncio.to_thread(load_demand_creation_upload)
 
 
 @app.post("/api/pipeline/summary")
