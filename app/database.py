@@ -22,6 +22,7 @@ SLSM_PENDING_VALIDATION_TABLE = "slsm_pending_validation"
 TARGET_UPLOAD_TABLE = "target_upload"
 TARGET_SLS_TABLE = "target_sls"
 TARGET_ACCOUNT_TABLE = "target_accounts"
+DEMAND_CREATION_TABLE = "demand_creation_upload"
 
 
 def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str, table_name: str = "revenue_forecast") -> int:
@@ -361,6 +362,48 @@ def load_target_accounts_for_sls(sls_name: str) -> list[dict[str, Any]]:
 
 def load_target_accounts() -> list[dict[str, Any]]:
     return _load_target_account_rows()
+
+
+def replace_demand_creation_upload(source_filename: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist the latest parsed Demand Creation workbook result."""
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    rows_saved = sum(int(value or 0) for value in payload.get("rowsProcessed", {}).values())
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(DEMAND_CREATION_TABLE)}")
+        conn.execute(
+            f"""
+            CREATE TABLE {_quote_identifier(DEMAND_CREATION_TABLE)} (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                source_filename TEXT NOT NULL,
+                rows_saved INTEGER NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {_quote_identifier(DEMAND_CREATION_TABLE)} (id, source_filename, rows_saved, payload_json) VALUES (1, ?, ?, ?)",
+            (source_filename, rows_saved, json.dumps(payload)),
+        )
+
+    return {"available": bool(payload.get("series")), "table": DEMAND_CREATION_TABLE, "rowsSaved": rows_saved, "sourceFilename": source_filename}
+
+
+def load_demand_creation_upload() -> dict[str, Any]:
+    if not DATABASE_PATH.exists():
+        return {"available": False, "sourceFilename": None, "series": [], "totals": {}, "rowsProcessed": {}}
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        if not _table_exists(conn, DEMAND_CREATION_TABLE):
+            return {"available": False, "sourceFilename": None, "series": [], "totals": {}, "rowsProcessed": {}}
+        row = conn.execute(
+            f"SELECT source_filename, payload_json FROM {_quote_identifier(DEMAND_CREATION_TABLE)} WHERE id = 1"
+        ).fetchone()
+
+    if not row:
+        return {"available": False, "sourceFilename": None, "series": [], "totals": {}, "rowsProcessed": {}}
+    payload = json.loads(row[1] or "{}")
+    return {"available": bool(payload.get("series")), "sourceFilename": row[0], **payload}
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:

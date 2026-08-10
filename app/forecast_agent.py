@@ -4,7 +4,7 @@ import csv
 import io
 import re
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
@@ -32,6 +32,7 @@ SLSM_FORECAST_SHEET = "SL_Forecast -2026"
 DEAL_TYPE_COLUMNS = ("Grouped Deal Type", "Group Deal Type", "Deal Type")
 TARGETS_SHEET = "SLM-SLS-Pivot"
 TARGET_TOTAL_LABEL = "Grand Total"
+DEMAND_CREATION_SHEETS = {"BCM": "BCM", "INS2": "INS2"}
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -840,6 +841,27 @@ def _year_value(value: Any) -> int | None:
         return int(match.group(1)) if match else None
 
 
+def _demand_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return date(1899, 12, 30) + timedelta(days=int(value))
+        except (OverflowError, ValueError):
+            return None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for pattern in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
 def parse_workbook(file_bytes: bytes, filename: str, sheet_name: str = "Data") -> tuple[list[str], list[list[Any]], dict[str, int]]:
     values = _read_sheet(file_bytes, filename, sheet_name)
     if len(values) < 2:
@@ -991,6 +1013,127 @@ def parse_target_pivot(file_bytes: bytes, filename: str, sheet_name: str = TARGE
         "metrics": metrics,
         "slsRows": sls_rows,
         "accountRows": account_rows,
+    }
+
+
+def parse_demand_creation_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
+    weekly: dict[date, dict[str, float]] = defaultdict(lambda: {"BCM": 0.0, "INS2": 0.0})
+    rows_processed = {series: 0 for series in DEMAND_CREATION_SHEETS}
+    accounts: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"total": 0.0, "months": defaultdict(float), "quarters": defaultdict(float), "roles": set()}
+    )
+    demand_profile = {series_name: {"total": 0.0, "months": defaultdict(float), "quarters": defaultdict(float)} for series_name in DEMAND_CREATION_SHEETS}
+    month_dates: dict[str, date] = {}
+    quarter_dates: dict[str, date] = {}
+
+    for sheet_name, series_name in DEMAND_CREATION_SHEETS.items():
+        values = _read_sheet(file_bytes, filename, sheet_name)
+        header_index = next(
+            (
+                index
+                for index, row in enumerate(values)
+                if _get_column(
+                    {str(cell or "").strip(): column for column, cell in enumerate(row) if str(cell or "").strip()},
+                    "Date of Demand Creation",
+                ) is not None
+            ),
+            None,
+        )
+        if header_index is None:
+            raise ValueError(f'Missing "Date of Demand Creation" column in {sheet_name} sheet.')
+
+        headers = [str(header or "").strip() for header in values[header_index]]
+        col_map = {header: index for index, header in enumerate(headers) if header}
+        date_column = _get_column(col_map, "Date of Demand Creation")
+        demand_column = _get_column(col_map, "No. of Demands")
+        account_column = _get_column(col_map, "Parent Customer")
+        role_column = _get_column(col_map, "Role")
+        if demand_column is None or account_column is None:
+            raise ValueError(f'Missing "No. of Demands" or "Parent Customer" column in {sheet_name} sheet.')
+
+        for row in values[header_index + 1 :]:
+            demand_date = _demand_date(_cell(row, date_column))
+            demand_count = _to_number(_cell(row, demand_column))
+            if demand_date is None or not demand_count:
+                continue
+
+            week_start = demand_date - timedelta(days=demand_date.weekday())
+            weekly[week_start][series_name] += demand_count
+            account_name = str(_cell(row, account_column) or "").strip() or "Unassigned"
+            month_key = demand_date.strftime("%Y-%m")
+            quarter_number = ((demand_date.month - 1) // 3) + 1
+            quarter_key = f"{demand_date.year}-Q{quarter_number}"
+            account = accounts[account_name]
+            account["total"] += demand_count
+            account["months"][month_key] += demand_count
+            account["quarters"][quarter_key] += demand_count
+            demand_profile[series_name]["total"] += demand_count
+            demand_profile[series_name]["months"][month_key] += demand_count
+            demand_profile[series_name]["quarters"][quarter_key] += demand_count
+            role = str(_cell(row, role_column) or "").strip() if role_column is not None else ""
+            if role:
+                account["roles"].add(role)
+            month_dates[month_key] = date(demand_date.year, demand_date.month, 1)
+            quarter_dates[quarter_key] = date(demand_date.year, (quarter_number - 1) * 3 + 1, 1)
+            rows_processed[series_name] += 1
+
+    ordered_weeks = sorted(weekly)
+    if ordered_weeks:
+        current_week = ordered_weeks[0]
+        final_week = ordered_weeks[-1]
+        while current_week <= final_week:
+            weekly[current_week]
+            current_week += timedelta(days=7)
+
+    series = [
+        {
+            "week": week_start.isoformat(),
+            "weekLabel": f"{week_start.strftime('%b')} {week_start.day}",
+            "BCM": weekly[week_start]["BCM"],
+            "INS2": weekly[week_start]["INS2"],
+        }
+        for week_start in sorted(weekly)
+    ]
+    sorted_months = sorted(month_dates, key=month_dates.get)
+    sorted_quarters = sorted(quarter_dates, key=quarter_dates.get)
+    top_accounts = []
+    for account_name, account in sorted(accounts.items(), key=lambda item: (-item[1]["total"], item[0].casefold()))[:10]:
+        roles = sorted(account["roles"])
+        top_accounts.append(
+            {
+                "account": account_name,
+                "description": roles[0] if len(roles) == 1 else (f"{len(roles)} roles" if roles else "—"),
+                "months": {key: account["months"][key] for key in sorted_months},
+                "quarters": {key: account["quarters"][key] for key in sorted_quarters},
+                "total": account["total"],
+            }
+        )
+
+    return {
+        "series": series,
+        "totals": {
+            "BCM": sum(row["BCM"] for row in series),
+            "INS2": sum(row["INS2"] for row in series),
+        },
+        "rowsProcessed": rows_processed,
+        "topAccounts": {
+            "months": [{"key": key, "label": month_dates[key].strftime("%b")} for key in sorted_months],
+            "quarters": [{"key": key, "label": f"Q{((quarter_dates[key].month - 1) // 3) + 1}"} for key in sorted_quarters],
+            "rows": top_accounts,
+        },
+        "demandProfile": {
+            "months": [{"key": key, "label": month_dates[key].strftime("%b")} for key in sorted_months],
+            "quarters": [{"key": key, "label": f"Q{((quarter_dates[key].month - 1) // 3) + 1} Total"} for key in sorted_quarters],
+            "rows": [
+                {
+                    "name": "BCM" if series_name == "BCM" else "INS 2",
+                    "total": demand_profile[series_name]["total"],
+                    "months": {key: demand_profile[series_name]["months"][key] for key in sorted_months},
+                    "quarters": {key: demand_profile[series_name]["quarters"][key] for key in sorted_quarters},
+                }
+                for series_name in DEMAND_CREATION_SHEETS
+            ],
+        },
     }
 
 
