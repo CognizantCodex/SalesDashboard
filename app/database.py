@@ -13,6 +13,7 @@ DATABASE_PATH = Path(
 )
 SYSTEM_COLUMNS = {"id", "source_filename", "row_number"}
 PIPELINE_UPLOAD_TABLE = "pipeline_upload"
+INSURANCE_PIPELINE_UPLOAD_TABLE = "insurance_pipeline_upload"
 WINS_LOST_TABLE = "wins_lost"
 PENDING_VALIDATION_TABLE = "pending_validation"
 SLSM_REVENUE_FORECAST_TABLE = "slsm_revenue_forecast"
@@ -95,6 +96,10 @@ def replace_slsm_pipeline_upload(headers: list[str], rows: list[list[Any]], sour
     return replace_pipeline_upload(headers, rows, source_filename, SLSM_PIPELINE_UPLOAD_TABLE)
 
 
+def replace_insurance_pipeline_upload(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return replace_pipeline_upload(headers, rows, source_filename, INSURANCE_PIPELINE_UPLOAD_TABLE)
+
+
 def load_pipeline_upload_metadata(table_name: str = PIPELINE_UPLOAD_TABLE) -> dict[str, Any]:
     if not DATABASE_PATH.exists():
         return {"available": False, "table": table_name, "rowsSaved": 0, "sourceFilename": None}
@@ -120,7 +125,11 @@ def load_slsm_pipeline_upload_metadata() -> dict[str, Any]:
     return load_pipeline_upload_metadata(SLSM_PIPELINE_UPLOAD_TABLE)
 
 
-def load_pipeline_upload(table_name: str = PIPELINE_UPLOAD_TABLE) -> tuple[list[str], list[list[Any]], str | None]:
+def load_insurance_pipeline_upload_metadata() -> dict[str, Any]:
+    return load_pipeline_upload_metadata(INSURANCE_PIPELINE_UPLOAD_TABLE)
+
+
+def _load_pipeline_upload_table(table_name: str) -> tuple[list[str], list[list[Any]], str | None]:
     if not DATABASE_PATH.exists():
         return [], [], None
 
@@ -143,8 +152,49 @@ def load_pipeline_upload(table_name: str = PIPELINE_UPLOAD_TABLE) -> tuple[list[
     return json.loads(headers_json or "[]"), json.loads(rows_json or "[]"), source_filename
 
 
+def _merged_pipeline_upload(
+    primary_table: str,
+) -> tuple[list[str], list[list[Any]], str | None]:
+    primary_headers, primary_rows, primary_filename = _load_pipeline_upload_table(primary_table)
+    insurance_headers, insurance_rows, insurance_filename = _load_pipeline_upload_table(INSURANCE_PIPELINE_UPLOAD_TABLE)
+
+    if not insurance_rows:
+        return primary_headers, primary_rows, primary_filename
+    if not primary_rows:
+        return insurance_headers, insurance_rows, insurance_filename
+
+    headers = list(primary_headers)
+    header_positions = {_normalized_header(header): index for index, header in enumerate(headers)}
+    for header in insurance_headers:
+        normalized = _normalized_header(header)
+        if normalized not in header_positions:
+            header_positions[normalized] = len(headers)
+            headers.append(header)
+
+    def align(rows: list[list[Any]], source_headers: list[str]) -> list[list[Any]]:
+        source_positions = {_normalized_header(header): index for index, header in enumerate(source_headers)}
+        return [
+            [
+                _cell(row, source_positions[_normalized_header(header)])
+                if _normalized_header(header) in source_positions
+                else None
+                for header in headers
+            ]
+            for row in rows
+        ]
+
+    filenames = [name for name in (primary_filename, insurance_filename) if name]
+    return headers, align(primary_rows, primary_headers) + align(insurance_rows, insurance_headers), " + ".join(filenames) or None
+
+
+def load_pipeline_upload(table_name: str = PIPELINE_UPLOAD_TABLE) -> tuple[list[str], list[list[Any]], str | None]:
+    if table_name != PIPELINE_UPLOAD_TABLE:
+        return _load_pipeline_upload_table(table_name)
+    return _merged_pipeline_upload(PIPELINE_UPLOAD_TABLE)
+
+
 def load_slsm_pipeline_upload() -> tuple[list[str], list[list[Any]], str | None]:
-    return load_pipeline_upload(SLSM_PIPELINE_UPLOAD_TABLE)
+    return _merged_pipeline_upload(SLSM_PIPELINE_UPLOAD_TABLE)
 
 
 def replace_wins_lost(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
@@ -662,6 +712,10 @@ def _unique_column_names(headers: list[str]) -> list[str]:
 
 def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
+
+
+def _normalized_header(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
 
 
 def _db_value(value: Any) -> Any:

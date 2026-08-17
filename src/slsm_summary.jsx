@@ -71,7 +71,7 @@ export default function SlsmSummary({ forecastWorkbook, onForecastWorkbookChange
     }
 
     loadSavedSlsmOptions();
-  }, [forecastWorkbook]);
+  }, [forecastWorkbook, pipelineUploadVersion]);
 
   useEffect(() => {
     const selectedName = selectedSlsmName.trim();

@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { apiUrl } from './api.js';
 import UploadOption from './upload_option.jsx';
 
 const VALID_WORKBOOK = /\.(xlsb|xlsx|xlsm)$/i;
+const SKILL_LOCATION_ROWS = ['Java', 'FSD', '.Net', 'UI – React/Angular'];
 
 function demandLabel(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
@@ -46,23 +47,13 @@ export default function DemandCreation() {
     }
   }
 
-  const summary = useMemo(() => {
-    if (!result) return [];
-    return [
-      { label: 'BCM Demands', value: demandLabel(result.totals?.BCM) },
-      { label: 'INS 2 Demands', value: demandLabel(result.totals?.INS2) },
-      { label: 'Weeks', value: result.series?.length || 0 },
-      { label: 'Source', value: result.sourceFilename || 'Uploaded workbook' }
-    ];
-  }, [result]);
-
   return (
     <>
       <header>
         <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" />
         </svg>
-        <h1>Demand Creation <span>BCM &amp; INS 2</span></h1>
+        <h1>Demand Profile &amp; Top Accounts <span>BCM &amp; INS 2</span></h1>
       </header>
 
       <main className="container demand-page">
@@ -80,20 +71,34 @@ export default function DemandCreation() {
         {isUploading && <div className="targets-loading"><span className="spinner" aria-hidden="true" />Processing weekly demand data...</div>}
 
         {result && (
-          <>
-            <section className="target-summary-grid demand-summary-grid" aria-label="Demand creation summary">
-              {summary.map((item) => <div className="target-summary-card" key={item.label}><span>{item.label}</span><strong>{item.value}</strong></div>)}
-            </section>
-            <section className="demand-analysis-grid">
+          <section className="demand-executive-grid">
+            <div className="demand-left-stack">
               <DemandProfileTable data={result.demandProfile} />
+              <SkillLocationTable />
+            </div>
+            <div className="demand-right-stack">
               <DemandLineChart rows={result.series || []} />
-            </section>
-            <TopAccountsTable data={result.topAccounts} />
-            <WeeklyDemandTable rows={result.series || []} />
-          </>
+              <TopAccountsTable data={result.topAccounts} />
+            </div>
+          </section>
         )}
       </main>
     </>
+  );
+}
+
+function SkillLocationTable() {
+  return (
+    <section className="skill-location-card" aria-label="Demand by skill and location">
+      <h2>By Skill / Location</h2>
+      <table>
+        <thead>
+          <tr><th rowSpan="2">Skills</th><th colSpan="3">Onsite</th><th colSpan="3">Offshore</th></tr>
+          <tr><th>Major US<br />Location 1</th><th>Major US<br />Location 2</th><th>Others</th><th>Major India<br />Location 1</th><th>Major India<br />Location 2</th><th>Others</th></tr>
+        </thead>
+        <tbody>{SKILL_LOCATION_ROWS.map((skill) => <tr key={skill}><th scope="row">{skill}</th>{Array.from({ length: 6 }, (_, index) => <td key={index}>—</td>)}</tr>)}</tbody>
+      </table>
+    </section>
   );
 }
 
@@ -149,8 +154,8 @@ function TopAccountsTable({ data }) {
 function DemandLineChart({ rows }) {
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const width = 960;
-  const height = 390;
-  const margin = { top: 38, right: 34, bottom: 72, left: 70 };
+  const height = 280;
+  const margin = { top: 30, right: 34, bottom: 58, left: 60 };
   const chartWidth = width - margin.left - margin.right;
   const chartHeight = height - margin.top - margin.bottom;
   const maxDemand = Math.max(1, ...rows.flatMap((row) => [Number(row.BCM || 0), Number(row.INS2 || 0)]));
@@ -174,10 +179,7 @@ function DemandLineChart({ rows }) {
 
   return (
     <section className="demand-chart-card">
-      <div className="table-header">
-        <div><h2>Weekly Demand Creation</h2><p>Vertical axis: demands · Horizontal axis: week of demand creation</p></div>
-        <div className="demand-legend"><span><i className="bcm-dot" />BCM</span><span><i className="ins2-dot" />INS 2</span></div>
-      </div>
+      <h2 className="demand-chart-title">Week on Week demand generation chart</h2>
       <div className="demand-chart-scroll">
         <svg className="demand-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Weekly demands for BCM and INS 2">
           {yTicks.map((tick) => {
@@ -203,17 +205,6 @@ function DemandLineChart({ rows }) {
           <text x="18" y={height / 2} className="demand-axis-title" textAnchor="middle" transform={`rotate(-90 18 ${height / 2})`}>Demands</text>
         </svg>
       </div>
-    </section>
-  );
-}
-
-function WeeklyDemandTable({ rows }) {
-  return (
-    <section className="table-wrap demand-table-wrap">
-      <div className="table-header"><h2>Weekly Demand Totals</h2></div>
-      <table className="demand-table"><thead><tr><th>Week</th><th>BCM</th><th>INS 2</th><th>Total</th></tr></thead><tbody>
-        {rows.map((row) => <tr key={row.week}><td>{row.weekLabel}</td><td>{demandLabel(row.BCM)}</td><td>{demandLabel(row.INS2)}</td><td>{demandLabel(Number(row.BCM || 0) + Number(row.INS2 || 0))}</td></tr>)}
-      </tbody></table>
     </section>
   );
 }

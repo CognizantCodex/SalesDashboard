@@ -1,7 +1,7 @@
 {
   "name": "sales-dashboard-ops",
-  "version": "1.0.0",
-  "description": "Run, maintain, test, deploy, and document the Sales Dashboard.",
+  "version": "1.0.0+codex.20260810203823",
+  "description": "Run, maintain, test, deploy, and document the Sales Dashboard, including Demand Creation reporting.",
   "author": {
     "name": "Sales Dashboard Team"
   },
@@ -9,14 +9,18 @@
   "interface": {
     "displayName": "Sales Dashboard Ops",
     "shortDescription": "Operate and deploy the Sales Dashboard.",
-    "longDescription": "Provides repeatable Codex workflows to start, restart, test, deploy, and document the Sales Dashboard for a team.",
+    "longDescription": "Provides repeatable Codex workflows to start, restart, test, deploy, and document the Sales Dashboard, including its persistent Demand Creation reporting for BCM and INS 2.",
     "developerName": "Sales Dashboard Team",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "defaultPrompt": [
       "Start the Sales Dashboard on port 8090.",
       "Restart the Sales Dashboard backend and frontend.",
-      "Generate Sales Dashboard deployment instructions."
+      "Generate Sales Dashboard deployment instructions.",
+      "Validate the Demand Creation upload, BCM and INS 2 weekly chart, and saved dashboard data."
     ]
   }
 }

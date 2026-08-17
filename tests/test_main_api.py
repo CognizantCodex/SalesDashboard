@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
+from app import database
 from app import forecast_agent
 from app.forecast_agent import analyze_forecast_rows, analyze_pipeline_rows, parse_target_pivot
 
@@ -175,6 +176,7 @@ def test_health_and_swagger_include_all_api_routes():
 def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):
     monkeypatch.setattr(main, "load_revenue_forecast_metadata", lambda: meta(True, "revenue_forecast", 10))
     monkeypatch.setattr(main, "load_pipeline_upload_metadata", lambda: meta(True, "pipeline_upload", 9))
+    monkeypatch.setattr(main, "load_insurance_pipeline_upload_metadata", lambda: meta(False, "insurance_pipeline_upload", 0))
     monkeypatch.setattr(main, "load_wins_lost_metadata", lambda: meta(True, "wins_lost", 8))
     monkeypatch.setattr(main, "load_pending_validation_metadata", lambda: meta(True, "pending_validation", 7))
     monkeypatch.setattr(main, "load_slsm_revenue_forecast_metadata", lambda: meta(False, "slsm_revenue_forecast", 0))
@@ -340,6 +342,20 @@ def test_current_endpoints_return_unavailable_when_storage_empty(monkeypatch):
     assert client.get("/api/slsm/won-lost/summary/current", params={"slsmName": "Alpha Manager"}).json()["available"] is False
     assert client.get("/api/pending-validation/summary/current", params={"slsName": "Seller A"}).json()["available"] is False
     assert client.get("/api/slsm/pending-validation/summary/current", params={"slsmName": "Alpha Manager"}).json()["available"] is False
+
+
+def test_slsm_options_include_names_from_saved_insurance_pipeline(monkeypatch):
+    insurance_rows = [
+        ["Insurance Manager", "Insurance Seller", "Qualified", 2026, 500_000, "Insurance Account", "Insurance", "New", "", "yes", "", 2026]
+    ]
+    monkeypatch.setattr(main, "load_revenue_forecast", lambda: ([], [], None))
+    monkeypatch.setattr(main, "load_slsm_revenue_forecast", lambda: ([], [], None))
+    monkeypatch.setattr(main, "load_slsm_pipeline_upload", lambda: (PIPELINE_HEADERS, insurance_rows, "insurance.xlsx"))
+
+    response = client.get("/api/slsm/forecast/options/current")
+
+    assert response.status_code == 200
+    assert response.json()["options"] == ["Insurance Manager"]
 
 
 def test_current_pipeline_tcv_endpoints(patched_storage, patched_analyzers):
@@ -682,6 +698,22 @@ def test_slsm_breakdown_does_not_duplicate_combined_sls_assignments(monkeypatch)
     assert sum(row["revenue"]["target"] for row in breakdown["rows"]) == summary["revenue"]["target"]
     assert sum(row["realizedTcv"]["total"] for row in breakdown["rows"]) == summary["realizedTcv"]["total"]
     assert sum(row["realizedTcv"]["won"] for row in breakdown["rows"]) == summary["realizedTcv"]["won"]
+
+
+def test_pipeline_upload_merges_insurance_rows_with_reordered_headers(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "dashboard.db")
+    insurance_headers = list(reversed(PIPELINE_HEADERS))
+    insurance_row = ["Insurance Account" if header == "Financial Ultimate Parent Account" else "Insurance Seller" if header == "SLS" else "Insurance Manager" if header == "SLSM" else 2026 if header in {"EDC Year", "Year Closed"} else "Qualified" if header == "Grouped Sales Stage" else 250_000 if header == "Net TCV Share" else "yes" if header == "Is Active?" else "" for header in insurance_headers]
+
+    database.replace_pipeline_upload(PIPELINE_HEADERS, [PIPELINE_ROWS[0]], "banking.xlsx")
+    database.replace_insurance_pipeline_upload(insurance_headers, [insurance_row], "insurance.xlsx")
+
+    headers, rows, filename = database.load_pipeline_upload()
+    pipeline = analyze_pipeline_rows(rows, {header: index for index, header in enumerate(headers)}, "Insurance Seller", 2026)
+
+    assert len(rows) == 2
+    assert filename == "banking.xlsx + insurance.xlsx"
+    assert pipeline["metrics"]["pipeline"] == 250_000
 
 
 def test_private_helpers():

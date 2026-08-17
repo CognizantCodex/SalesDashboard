@@ -1,6 +1,6 @@
 ---
 name: sales-dashboard-operations
-description: Run, maintain, test, deploy, and document the Sales Dashboard. Use when the user asks to start or restart the dashboard, run it on port 8090, test it, diagnose service availability, or create deployment instructions.
+description: Run, maintain, test, deploy, and document the Sales Dashboard, including the BCM and INS 2 Demand Creation dashboard. Use when the user asks to start or restart the dashboard, run it on port 8090, test it, diagnose service availability, validate Demand Creation uploads, or create deployment instructions.
 ---
 
 # Sales Dashboard Operations
@@ -13,6 +13,7 @@ The plugin provides these Codex commands:
 | Run on port 8090 | `scripts/start-sales-dashboard.sh --port 8090` |
 | Restart backend and frontend | `scripts/restart-sales-dashboard.sh` |
 | Generate deployment instructions | `scripts/generate-deployment-instructions.sh` |
+| Validate Demand Creation | Upload a workbook with `BCM` and `INS2` sheets, then verify the saved data after a page reload |
 
 ## Operating Rules
 
@@ -28,6 +29,13 @@ The plugin provides these Codex commands:
 ## Testing
 
 Run backend tests with `python3 -m pytest tests/test_main_api.py` and the frontend production check with `npm run build` from the project root.
+
+## Demand Creation Validation
+
+- Upload a `.xlsx`, `.xlsm`, or `.xlsb` workbook containing `BCM` and `INS2` sheets.
+- Confirm the weekly line chart has BCM and INS 2 points, and hover each point to view its demand count.
+- Confirm the Demand Profile and Top 10 Accounts tables render from the combined sheet data.
+- Reload the page and verify that the latest uploaded workbook result remains available.
 
 ## Deployment Documentation
 

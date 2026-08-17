@@ -11,6 +11,8 @@ import SlsmSummary from './slsm_summary.jsx';
 import SlslSummary from './slsl_summary.jsx';
 import UploadTargets from './upload_targets.jsx';
 import DemandCreation from './demand_creation.jsx';
+import BcmiDashboard from './bcmi_dashboard.jsx';
+import ReportGeneration from './report_generation.jsx';
 import { apiUrl } from './api.js';
 
 const NAV_ITEMS = [
@@ -18,7 +20,9 @@ const NAV_ITEMS = [
   { id: 'slsm', label: 'SLSM' },
   { id: 'sls', label: 'SLS' },
   { id: 'targets', label: 'Target' },
-  { id: 'demand-creation', label: 'Demand Creation' }
+  { id: 'demand-creation', label: 'Demand Creation' },
+  { id: 'bcmi', label: 'BCMI' }
+  , { id: 'report-generation', label: 'Report Generation' }
 ];
 
 function roundedMillions(value) {
@@ -166,6 +170,22 @@ export default function SalesForecast() {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
         <DemandCreation />
+      </DashboardShell>
+    );
+  }
+
+  if (activeDashboard === 'bcmi') {
+    return (
+      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
+        <BcmiDashboard />
+      </DashboardShell>
+    );
+  }
+
+  if (activeDashboard === 'report-generation') {
+    return (
+      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
+        <ReportGeneration />
       </DashboardShell>
     );
   }

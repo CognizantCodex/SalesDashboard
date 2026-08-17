@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from .database import (
     load_demand_creation_upload,
     load_pending_validation_metadata,
+    load_insurance_pipeline_upload_metadata,
     load_pipeline_upload,
     load_pipeline_upload_metadata,
     load_revenue_forecast,
@@ -30,6 +38,7 @@ from .database import (
     replace_pending_validation,
     replace_demand_creation_upload,
     replace_pipeline_upload,
+    replace_insurance_pipeline_upload,
     replace_revenue_forecast,
     replace_slsm_pending_validation,
     replace_slsm_pipeline_upload,
@@ -53,6 +62,7 @@ OPENAPI_TAGS = [
     {"name": "SLSM Realized TCV", "description": "SLSM won/lost and pending validation APIs."},
     {"name": "Targets", "description": "Target workbook upload and SLS account target APIs."},
     {"name": "Demand Creation", "description": "Weekly BCM and INS 2 demand creation reporting APIs."},
+    {"name": "Reports", "description": "PowerPoint report generation APIs."},
 ]
 
 
@@ -70,6 +80,48 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+REPORT_EXPORT_DIR = Path(tempfile.gettempdir()) / "sales-dashboard-reports"
+
+
+def _presentation_node() -> str:
+    configured = os.environ.get("SALES_DASHBOARD_PRESENTATION_NODE")
+    bundled = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node"
+    for candidate in (configured, str(bundled), shutil.which("node")):
+        if candidate and Path(candidate).exists():
+            return candidate
+    raise RuntimeError("Node.js is required to create the PowerPoint report.")
+
+
+def _create_report_presentation(demand: dict) -> Path:
+    if not demand.get("available"):
+        raise ValueError("Upload a Demand Creation workbook before generating a report.")
+
+    REPORT_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report_id = uuid4().hex
+    input_path = REPORT_EXPORT_DIR / f"{report_id}.json"
+    output_path = REPORT_EXPORT_DIR / f"Sales_Dashboard_Report_{report_id}.pptx"
+    input_path.write_text(json.dumps({"demand": demand}), encoding="utf-8")
+    try:
+        artifact_tool_root = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/@oai/artifact-tool"
+        command_env = os.environ.copy()
+        command_env.setdefault("SALES_DASHBOARD_ARTIFACT_TOOL_ROOT", str(artifact_tool_root))
+        completed = subprocess.run(
+            [_presentation_node(), str(Path(__file__).with_name("report_presentation.mjs")), str(input_path), str(output_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90,
+            env=command_env,
+        )
+    finally:
+        input_path.unlink(missing_ok=True)
+
+    if completed.returncode != 0 or not output_path.exists():
+        detail = (completed.stderr or completed.stdout or "Unable to create PowerPoint report.").strip()
+        raise RuntimeError(detail)
+    return output_path
 
 
 def _money_label(value: float) -> str:
@@ -168,7 +220,7 @@ def health() -> dict[str, str | bool]:
 @app.get("/api/forecast/current/metadata")
 async def current_forecast_metadata() -> dict:
     metadata = await asyncio.to_thread(load_revenue_forecast_metadata)
-    return {"available": metadata["available"], "database": metadata}
+    return {"available": bool(metadata["available"] or insurance_metadata["available"]), "database": metadata}
 
 
 @app.get("/api/forecast/current")
@@ -235,15 +287,19 @@ async def current_slsm_forecast_options() -> dict:
         forecast_headers, forecast_rows, forecast_source = await asyncio.to_thread(load_revenue_forecast)
         options = _unique_slsm_names(pivot_rows, pivot_headers)
         options.update(_unique_slsm_names(forecast_rows, forecast_headers))
+        pipeline_headers, pipeline_rows, pipeline_source = await asyncio.to_thread(load_slsm_pipeline_upload)
+        if not pipeline_rows:
+            pipeline_headers, pipeline_rows, pipeline_source = await asyncio.to_thread(load_pipeline_upload)
+        options.update(_unique_slsm_names(pipeline_rows, pipeline_headers))
         if not options:
             return {"available": False, "options": [], "database": {"table": "slsm_revenue_forecast", "rowsSaved": 0}}
         return {
             "available": True,
             "options": sorted(options, key=lambda value: value.lower()),
             "database": {
-                "table": "slsm_revenue_forecast" if pivot_rows else "revenue_forecast",
-                "rowsSaved": len(pivot_rows) or len(forecast_rows),
-                "sourceFilename": pivot_source or forecast_source,
+                "table": "slsm_revenue_forecast" if pivot_rows else "revenue_forecast" if forecast_rows else "slsm_pipeline_upload",
+                "rowsSaved": (len(pivot_rows) or len(forecast_rows)) + len(pipeline_rows),
+                "sourceFilename": pivot_source or forecast_source or pipeline_source,
                 "sheet": SLSM_FORECAST_SHEET,
             },
         }
@@ -292,6 +348,22 @@ async def current_slsm_sls_breakdown(
 @app.get("/api/pipeline/upload/metadata")
 async def pipeline_upload_metadata() -> dict:
     metadata = await asyncio.to_thread(load_pipeline_upload_metadata)
+    insurance_metadata = await asyncio.to_thread(load_insurance_pipeline_upload_metadata)
+    if insurance_metadata["available"]:
+        metadata = {
+            **metadata,
+            "rowsSaved": metadata["rowsSaved"] + insurance_metadata["rowsSaved"],
+            "sourceFilename": " + ".join(
+                name for name in (metadata["sourceFilename"], insurance_metadata["sourceFilename"]) if name
+            ),
+            "insuranceRowsSaved": insurance_metadata["rowsSaved"],
+        }
+    return {"available": metadata["available"], "database": metadata}
+
+
+@app.get("/api/pipeline/insurance/upload/metadata")
+async def insurance_pipeline_upload_metadata() -> dict:
+    metadata = await asyncio.to_thread(load_insurance_pipeline_upload_metadata)
     return {"available": metadata["available"], "database": metadata}
 
 
@@ -314,7 +386,17 @@ async def slsm_pipeline_upload_metadata() -> dict:
         metadata = await asyncio.to_thread(load_pipeline_upload_metadata)
         if metadata["available"]:
             metadata = {**metadata, "table": "pipeline_upload", "sharedFrom": "sls"}
-    return {"available": metadata["available"], "database": metadata}
+    insurance_metadata = await asyncio.to_thread(load_insurance_pipeline_upload_metadata)
+    if insurance_metadata["available"]:
+        metadata = {
+            **metadata,
+            "rowsSaved": metadata["rowsSaved"] + insurance_metadata["rowsSaved"],
+            "sourceFilename": " + ".join(
+                name for name in (metadata["sourceFilename"], insurance_metadata["sourceFilename"]) if name
+            ),
+            "insuranceRowsSaved": insurance_metadata["rowsSaved"],
+        }
+    return {"available": bool(metadata["available"] or insurance_metadata["available"]), "database": metadata}
 
 
 @app.get("/api/slsm/wins-lost/upload/metadata")
@@ -573,6 +655,27 @@ async def upload_pipeline(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/pipeline/insurance/upload")
+async def upload_insurance_pipeline(
+    workbook: UploadFile = File(...),
+    sheetName: str = Form("Data"),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
+        rows_saved = await asyncio.to_thread(replace_insurance_pipeline_upload, headers, rows, workbook.filename or "")
+        return {
+            "available": rows_saved > 0,
+            "database": {
+                "table": "insurance_pipeline_upload",
+                "rowsSaved": rows_saved,
+                "sourceFilename": workbook.filename or "",
+            },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/forecast/upload")
 async def upload_forecast(
     workbook: UploadFile = File(...),
@@ -627,6 +730,7 @@ async def upload_slsm_pipeline(
         file_bytes = await workbook.read()
         headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
         rows_saved = await asyncio.to_thread(replace_slsm_pipeline_upload, headers, rows, workbook.filename or "")
+        await asyncio.to_thread(replace_pipeline_upload, headers, rows, workbook.filename or "")
         wins_lost_saved = 0
         try:
             wins_headers, wins_rows, _wins_col_map = parse_workbook(file_bytes, workbook.filename or "", "Wins")
@@ -704,6 +808,22 @@ async def upload_demand_creation(workbook: UploadFile = File(...)) -> dict:
 @app.get("/api/demand-creation/current", tags=["Demand Creation"])
 async def current_demand_creation() -> dict:
     return await asyncio.to_thread(load_demand_creation_upload)
+
+
+@app.get("/api/reports/export", tags=["Reports"])
+async def export_dashboard_report() -> FileResponse:
+    demand = await asyncio.to_thread(load_demand_creation_upload)
+    try:
+        report_path = await asyncio.to_thread(_create_report_presentation, demand)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=f"PowerPoint generation failed: {exc}") from exc
+    return FileResponse(
+        report_path,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        filename="Sales_Dashboard_Report.pptx",
+    )
 
 
 @app.post("/api/pipeline/summary")
