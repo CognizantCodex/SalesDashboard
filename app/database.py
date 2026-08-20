@@ -14,6 +14,7 @@ DATABASE_PATH = Path(
 SYSTEM_COLUMNS = {"id", "source_filename", "row_number"}
 PIPELINE_UPLOAD_TABLE = "pipeline_upload"
 INSURANCE_PIPELINE_UPLOAD_TABLE = "insurance_pipeline_upload"
+INSURANCE_REVENUE_FORECAST_TABLE = "insurance_revenue_forecast"
 WINS_LOST_TABLE = "wins_lost"
 PENDING_VALIDATION_TABLE = "pending_validation"
 SLSM_REVENUE_FORECAST_TABLE = "slsm_revenue_forecast"
@@ -56,6 +57,10 @@ def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_f
 
 def replace_slsm_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
     return replace_revenue_forecast(headers, rows, source_filename, SLSM_REVENUE_FORECAST_TABLE)
+
+
+def replace_insurance_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    return replace_revenue_forecast(headers, rows, source_filename, INSURANCE_REVENUE_FORECAST_TABLE)
 
 
 def replace_pipeline_upload(
@@ -270,7 +275,11 @@ def load_slsm_revenue_forecast_metadata() -> dict[str, Any]:
     return load_revenue_forecast_metadata(SLSM_REVENUE_FORECAST_TABLE)
 
 
-def load_revenue_forecast(table_name: str = "revenue_forecast") -> tuple[list[str], list[list[Any]], str | None]:
+def load_insurance_revenue_forecast_metadata() -> dict[str, Any]:
+    return load_revenue_forecast_metadata(INSURANCE_REVENUE_FORECAST_TABLE)
+
+
+def _load_revenue_forecast_table(table_name: str) -> tuple[list[str], list[list[Any]], str | None]:
     if not DATABASE_PATH.exists():
         return [], [], None
 
@@ -291,6 +300,43 @@ def load_revenue_forecast(table_name: str = "revenue_forecast") -> tuple[list[st
     source_filename = records[0][0] if records else None
     rows = [list(record[1:]) for record in records]
     return headers, rows, source_filename
+
+
+def _merged_revenue_forecast() -> tuple[list[str], list[list[Any]], str | None]:
+    primary_headers, primary_rows, primary_filename = _load_revenue_forecast_table("revenue_forecast")
+    insurance_headers, insurance_rows, insurance_filename = _load_revenue_forecast_table(INSURANCE_REVENUE_FORECAST_TABLE)
+    if not insurance_rows:
+        return primary_headers, primary_rows, primary_filename
+    if not primary_rows:
+        return insurance_headers, insurance_rows, insurance_filename
+
+    headers = list(primary_headers)
+    normalized_headers = {_normalized_header(header) for header in headers}
+    for header in insurance_headers:
+        if _normalized_header(header) not in normalized_headers:
+            headers.append(header)
+            normalized_headers.add(_normalized_header(header))
+
+    def align(rows: list[list[Any]], source_headers: list[str]) -> list[list[Any]]:
+        source_positions = {_normalized_header(header): index for index, header in enumerate(source_headers)}
+        return [
+            [
+                _cell(row, source_positions[_normalized_header(header)])
+                if _normalized_header(header) in source_positions
+                else None
+                for header in headers
+            ]
+            for row in rows
+        ]
+
+    filenames = [name for name in (primary_filename, insurance_filename) if name]
+    return headers, align(primary_rows, primary_headers) + align(insurance_rows, insurance_headers), " + ".join(filenames) or None
+
+
+def load_revenue_forecast(table_name: str = "revenue_forecast") -> tuple[list[str], list[list[Any]], str | None]:
+    if table_name != "revenue_forecast":
+        return _load_revenue_forecast_table(table_name)
+    return _merged_revenue_forecast()
 
 
 def load_slsm_revenue_forecast() -> tuple[list[str], list[list[Any]], str | None]:

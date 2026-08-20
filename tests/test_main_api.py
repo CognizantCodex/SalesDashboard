@@ -175,6 +175,7 @@ def test_health_and_swagger_include_all_api_routes():
 
 def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):
     monkeypatch.setattr(main, "load_revenue_forecast_metadata", lambda: meta(True, "revenue_forecast", 10))
+    monkeypatch.setattr(main, "load_insurance_revenue_forecast_metadata", lambda: meta(False, "insurance_revenue_forecast", 0))
     monkeypatch.setattr(main, "load_pipeline_upload_metadata", lambda: meta(True, "pipeline_upload", 9))
     monkeypatch.setattr(main, "load_insurance_pipeline_upload_metadata", lambda: meta(False, "insurance_pipeline_upload", 0))
     monkeypatch.setattr(main, "load_wins_lost_metadata", lambda: meta(True, "wins_lost", 8))
@@ -678,6 +679,7 @@ def test_slsm_breakdown_does_not_duplicate_combined_sls_assignments(monkeypatch)
         ["Alpha Manager", "Seller A", "Cloud", "Account A", 1_000, 1_200],
         ["Alpha Manager", "Seller A + Seller B", "Cloud", "Account B", 2_000, 2_100],
         ["Alpha Manager", "Seller B", "Cloud", "Account C", 3_000, 3_100],
+        ["Alpha Manager", "Seller Zero", "Cloud", "Account Zero", 0, 0],
     ]
     pipeline_rows = [
         ["Alpha Manager", "Seller A", "Won", 2026, 1_000_000, "Account A", "Cloud", "New", "", "yes", "", 2026],
@@ -698,6 +700,7 @@ def test_slsm_breakdown_does_not_duplicate_combined_sls_assignments(monkeypatch)
     assert sum(row["revenue"]["target"] for row in breakdown["rows"]) == summary["revenue"]["target"]
     assert sum(row["realizedTcv"]["total"] for row in breakdown["rows"]) == summary["realizedTcv"]["total"]
     assert sum(row["realizedTcv"]["won"] for row in breakdown["rows"]) == summary["realizedTcv"]["won"]
+    assert "Seller Zero" not in {row["slsName"] for row in breakdown["rows"]}
 
 
 def test_pipeline_upload_merges_insurance_rows_with_reordered_headers(tmp_path, monkeypatch):
@@ -714,6 +717,25 @@ def test_pipeline_upload_merges_insurance_rows_with_reordered_headers(tmp_path, 
     assert len(rows) == 2
     assert filename == "banking.xlsx + insurance.xlsx"
     assert pipeline["metrics"]["pipeline"] == 250_000
+
+
+def test_revenue_upload_merges_insurance_rows_with_reordered_headers(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "dashboard.db")
+    insurance_headers = list(reversed(FORECAST_HEADERS))
+    insurance_row = [
+        1_000 if header == "FY 26 (SL)" else 1_500 if header == "Target 2026" else "Insurance Manager" if header == "SLSM" else "Insurance Seller" if header == "SLS" else "Insurance Account" if header == "Parent Account Name" else "IC/Forecasted" if header == "P&L Source" else "Net Revenue" if header == "P&L Header" else "Insurance"
+        for header in insurance_headers
+    ]
+
+    database.replace_revenue_forecast(FORECAST_HEADERS, [FORECAST_ROWS[0]], "banking-revenue.xlsx")
+    database.replace_insurance_revenue_forecast(insurance_headers, [insurance_row], "insurance-revenue.xlsx")
+
+    headers, rows, filename = database.load_revenue_forecast()
+    forecast = analyze_forecast_rows(rows, {header: index for index, header in enumerate(headers)}, "Insurance Seller")
+
+    assert len(rows) == 2
+    assert filename == "banking-revenue.xlsx + insurance-revenue.xlsx"
+    assert forecast["metrics"]["forecast"] == 1_000
 
 
 def test_private_helpers():

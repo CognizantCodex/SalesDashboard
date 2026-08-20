@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from .database import (
     load_demand_creation_upload,
+    load_insurance_revenue_forecast_metadata,
     load_pending_validation_metadata,
     load_insurance_pipeline_upload_metadata,
     load_pipeline_upload,
@@ -39,6 +40,7 @@ from .database import (
     replace_demand_creation_upload,
     replace_pipeline_upload,
     replace_insurance_pipeline_upload,
+    replace_insurance_revenue_forecast,
     replace_revenue_forecast,
     replace_slsm_pending_validation,
     replace_slsm_pipeline_upload,
@@ -220,7 +222,23 @@ def health() -> dict[str, str | bool]:
 @app.get("/api/forecast/current/metadata")
 async def current_forecast_metadata() -> dict:
     metadata = await asyncio.to_thread(load_revenue_forecast_metadata)
+    insurance_metadata = await asyncio.to_thread(load_insurance_revenue_forecast_metadata)
+    if insurance_metadata["available"]:
+        metadata = {
+            **metadata,
+            "rowsSaved": metadata["rowsSaved"] + insurance_metadata["rowsSaved"],
+            "sourceFilename": " + ".join(
+                name for name in (metadata["sourceFilename"], insurance_metadata["sourceFilename"]) if name
+            ),
+            "insuranceRowsSaved": insurance_metadata["rowsSaved"],
+        }
     return {"available": bool(metadata["available"] or insurance_metadata["available"]), "database": metadata}
+
+
+@app.get("/api/forecast/insurance/upload/metadata")
+async def insurance_forecast_upload_metadata() -> dict:
+    metadata = await asyncio.to_thread(load_insurance_revenue_forecast_metadata)
+    return {"available": metadata["available"], "database": metadata}
 
 
 @app.get("/api/forecast/current")
@@ -700,6 +718,27 @@ async def upload_forecast(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/forecast/insurance/upload")
+async def upload_insurance_forecast(
+    workbook: UploadFile = File(...),
+    sheetName: str = Form("Data"),
+) -> dict:
+    try:
+        file_bytes = await workbook.read()
+        headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
+        rows_saved = await asyncio.to_thread(replace_insurance_revenue_forecast, headers, rows, workbook.filename or "")
+        return {
+            "available": rows_saved > 0,
+            "database": {
+                "table": "insurance_revenue_forecast",
+                "rowsSaved": rows_saved,
+                "sourceFilename": workbook.filename or "",
+            },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/slsm/forecast/upload")
 async def upload_slsm_forecast(
     workbook: UploadFile = File(...),
@@ -1136,6 +1175,18 @@ def build_slsm_sls_breakdown(slsm_name: str, current_year: int | None = None) ->
                 pass
 
         realized_tcv = (won_metrics.get("won") or 0.0) + (pending_metrics.get("pendingValidation") or 0.0)
+        metric_values = (
+            revenue_metrics.get("forecast", 0.0),
+            revenue_metrics.get("target", 0.0),
+            revenue_metrics.get("gap", 0.0),
+            pipeline_metrics.get("pipeline", 0.0),
+            pipeline_metrics.get("qualified", 0.0),
+            pipeline_metrics.get("unqualified", 0.0),
+            won_metrics.get("won", 0.0),
+            pending_metrics.get("pendingValidation", 0.0),
+        )
+        if not any(value != 0 for value in metric_values):
+            continue
         summary_rows.append(
             {
                 "slsName": sls_name,

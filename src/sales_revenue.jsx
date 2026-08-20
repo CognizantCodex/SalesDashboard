@@ -9,6 +9,8 @@ const ENTITY_CONFIG = {
     currentUrl: apiUrl('/api/forecast/current'),
     uploadUrl: apiUrl('/api/forecast/upload'),
     metadataUrl: apiUrl('/api/forecast/current/metadata'),
+    insuranceUploadUrl: apiUrl('/api/forecast/insurance/upload'),
+    insuranceMetadataUrl: apiUrl('/api/forecast/insurance/upload/metadata'),
     savedTableLabel: 'saved revenue_forecast data',
     sheetName: 'Data'
   },
@@ -18,6 +20,8 @@ const ENTITY_CONFIG = {
     currentUrl: apiUrl('/api/slsm/forecast/current'),
     uploadUrl: apiUrl('/api/slsm/forecast/upload'),
     metadataUrl: apiUrl('/api/slsm/forecast/current/metadata'),
+    insuranceUploadUrl: apiUrl('/api/forecast/insurance/upload'),
+    insuranceMetadataUrl: apiUrl('/api/forecast/insurance/upload/metadata'),
     savedTableLabel: 'saved slsm_revenue_forecast data',
     sheetName: 'SL_Forecast -2026'
   }
@@ -52,7 +56,10 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
   const [workbook, setWorkbook] = useState(null);
   const [result, setResult] = useState(null);
   const [savedForecast, setSavedForecast] = useState(null);
+  const [insuranceWorkbook, setInsuranceWorkbook] = useState(null);
+  const [savedInsuranceForecast, setSavedInsuranceForecast] = useState(null);
   const [error, setError] = useState('');
+  const [insuranceError, setInsuranceError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -87,29 +94,39 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
       return undefined;
     }
 
-    if (!workbook && !savedForecast?.rowsSaved) return undefined;
+    if (!workbook && !insuranceWorkbook && !savedForecast?.rowsSaved && !savedInsuranceForecast?.rowsSaved) return undefined;
 
     const timeoutId = window.setTimeout(() => {
       loadStoredForecast(trimmedName, { silent: true });
     }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [slsName, workbook, savedForecast?.rowsSaved]);
+  }, [slsName, workbook, insuranceWorkbook, savedForecast?.rowsSaved, savedInsuranceForecast?.rowsSaved]);
 
   useEffect(() => {
     let ignore = false;
 
     async function loadSavedForecastMetadata() {
       try {
-        const response = await fetch(config.metadataUrl);
-        const payload = await readApiPayload(response, 'Unable to load saved forecast metadata.');
+        const [response, insuranceResponse] = await Promise.all([
+          fetch(config.metadataUrl),
+          fetch(config.insuranceMetadataUrl)
+        ]);
+        const [payload, insurancePayload] = await Promise.all([
+          readApiPayload(response, 'Unable to load saved forecast metadata.'),
+          readApiPayload(insuranceResponse, 'Unable to load saved Insurance forecast metadata.')
+        ]);
         if (!response.ok) throw new Error(payload.detail || payload.error || 'Unable to load saved forecast metadata.');
 
         if (!ignore && payload.available) {
           setSavedForecast(payload.database);
         }
+        if (!ignore && insuranceResponse.ok && insurancePayload.available) setSavedInsuranceForecast(insurancePayload.database);
       } catch {
-        if (!ignore) setSavedForecast(null);
+        if (!ignore) {
+          setSavedForecast(null);
+          setSavedInsuranceForecast(null);
+        }
       }
     }
 
@@ -176,12 +193,12 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     await loadStoredForecast(slsName);
   }
 
-  async function uploadRevenueWorkbook(file) {
+  async function uploadRevenueWorkbook(file, uploadUrl = config.uploadUrl, sheetName = config.sheetName) {
     const formData = new FormData();
     formData.append('workbook', file);
-    formData.append('sheetName', config.sheetName);
+    formData.append('sheetName', sheetName);
 
-    const response = await fetch(config.uploadUrl, {
+    const response = await fetch(uploadUrl, {
       method: 'POST',
       body: formData
     });
@@ -486,6 +503,40 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     }
   }
 
+  async function selectInsuranceWorkbook(file, source = 'select') {
+    if (!file) {
+      setInsuranceWorkbook(null);
+      setInsuranceError('');
+      return;
+    }
+
+    const allowed = /\.(xlsb|xlsx|xlsm)$/i.test(file.name);
+    if (!allowed) {
+      setInsuranceWorkbook(null);
+      setSavedInsuranceForecast(null);
+      setInsuranceError('Please ' + (source === 'drop' ? 'drop' : 'select') + ' an Insurance .xlsb, .xlsx, or .xlsm workbook.');
+      return;
+    }
+
+    setLoading(true);
+    setInsuranceError('');
+    try {
+      const database = await uploadRevenueWorkbook(file, config.insuranceUploadUrl, 'Data');
+      setSavedInsuranceForecast(database);
+      setInsuranceWorkbook(file);
+      setResult(null);
+      onSummaryChange(null);
+      onMatchedNamesChange([]);
+      onResultChange(null);
+    } catch (err) {
+      setInsuranceWorkbook(null);
+      setSavedInsuranceForecast(null);
+      setInsuranceError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const uploadTitle = workbook
     ? workbook.name
     : savedForecast?.sourceFilename || 'Drop your revenue workbook here';
@@ -498,6 +549,18 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
     : savedForecast?.rowsSaved
       ? savedForecast.rowsSaved.toLocaleString() + ' rows loaded from ' + config.savedTableLabel
       : 'Supports .xlsb and .xlsx - processed by the Python agent';
+  const insuranceUploadTitle = insuranceWorkbook
+    ? insuranceWorkbook.name
+    : savedInsuranceForecast?.sourceFilename || 'Drop your Insurance revenue workbook here';
+  const insuranceUploadSubtitle = insuranceWorkbook
+    ? loading
+      ? 'Processing Insurance revenue workbook...'
+      : savedInsuranceForecast?.rowsSaved
+        ? savedInsuranceForecast.rowsSaved.toLocaleString() + ' Insurance rows merged with saved revenue data'
+        : 'Insurance revenue workbook uploaded and processed'
+    : savedInsuranceForecast?.rowsSaved
+      ? savedInsuranceForecast.rowsSaved.toLocaleString() + ' Insurance rows merged with saved revenue data'
+      : 'Supports .xlsb and .xlsx - processed by the Python agent';
 
   return (
     <>
@@ -509,6 +572,16 @@ export default function SalesRevenue({ slsName, runRequestId, onLoadingChange, o
         icon="revenue"
         isComplete={Boolean(workbook || savedForecast?.rowsSaved)}
         onFileSelect={selectWorkbook}
+      />
+      <UploadOption
+        className="revenue-upload insurance-revenue-upload"
+        label="Insurance Revenue"
+        title={insuranceUploadTitle}
+        subtitle={insuranceUploadSubtitle}
+        error={insuranceError}
+        icon="revenue"
+        isComplete={Boolean(insuranceWorkbook || savedInsuranceForecast?.rowsSaved)}
+        onFileSelect={selectInsuranceWorkbook}
       />
 
       <section className="revenue-flow">

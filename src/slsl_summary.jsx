@@ -4,6 +4,9 @@ import UploadOption from './upload_option.jsx';
 
 const WORKBOOK_PATTERN = /\.(xlsb|xlsx|xlsm)$/i;
 const REVENUE_METADATA_URL = apiUrl('/api/forecast/current/metadata');
+const INSURANCE_REVENUE_METADATA_URL = apiUrl('/api/forecast/insurance/upload/metadata');
+const REVENUE_UPLOAD_URL = apiUrl('/api/forecast/upload');
+const INSURANCE_REVENUE_UPLOAD_URL = apiUrl('/api/forecast/insurance/upload');
 const PIPELINE_METADATA_URL = apiUrl('/api/pipeline/upload/metadata');
 const INSURANCE_PIPELINE_METADATA_URL = apiUrl('/api/pipeline/insurance/upload/metadata');
 const PIPELINE_UPLOAD_URL = apiUrl('/api/pipeline/upload');
@@ -14,12 +17,15 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
   const [pipelineWorkbook, setPipelineWorkbook] = useState(null);
   const [insurancePipelineWorkbook, setInsurancePipelineWorkbook] = useState(null);
   const [savedRevenue, setSavedRevenue] = useState(null);
+  const [insuranceRevenueWorkbook, setInsuranceRevenueWorkbook] = useState(null);
+  const [savedInsuranceRevenue, setSavedInsuranceRevenue] = useState(null);
   const [savedPipeline, setSavedPipeline] = useState(null);
   const [savedInsurancePipeline, setSavedInsurancePipeline] = useState(null);
   const [summaryRows, setSummaryRows] = useState([]);
   const [summaryError, setSummaryError] = useState('');
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [revenueError, setRevenueError] = useState('');
+  const [insuranceRevenueError, setInsuranceRevenueError] = useState('');
   const [pipelineError, setPipelineError] = useState('');
   const [insurancePipelineError, setInsurancePipelineError] = useState('');
   const [pipelineUploadVersion, setPipelineUploadVersion] = useState(0);
@@ -33,25 +39,29 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
 
     async function loadSavedUploads() {
       try {
-        const [revenueResponse, pipelineResponse, insurancePipelineResponse] = await Promise.all([
+        const [revenueResponse, insuranceRevenueResponse, pipelineResponse, insurancePipelineResponse] = await Promise.all([
           fetch(REVENUE_METADATA_URL),
+          fetch(INSURANCE_REVENUE_METADATA_URL),
           fetch(PIPELINE_METADATA_URL),
           fetch(INSURANCE_PIPELINE_METADATA_URL)
         ]);
-        const [revenuePayload, pipelinePayload, insurancePipelinePayload] = await Promise.all([
+        const [revenuePayload, insuranceRevenuePayload, pipelinePayload, insurancePipelinePayload] = await Promise.all([
           revenueResponse.json(),
+          insuranceRevenueResponse.json(),
           pipelineResponse.json(),
           insurancePipelineResponse.json()
         ]);
 
         if (!ignore) {
           setSavedRevenue(revenueResponse.ok && revenuePayload.available ? revenuePayload.database : null);
+          setSavedInsuranceRevenue(insuranceRevenueResponse.ok && insuranceRevenuePayload.available ? insuranceRevenuePayload.database : null);
           setSavedPipeline(pipelineResponse.ok && pipelinePayload.available ? pipelinePayload.database : null);
           setSavedInsurancePipeline(insurancePipelineResponse.ok && insurancePipelinePayload.available ? insurancePipelinePayload.database : null);
         }
       } catch {
         if (!ignore) {
           setSavedRevenue(null);
+          setSavedInsuranceRevenue(null);
           setSavedPipeline(null);
           setSavedInsurancePipeline(null);
         }
@@ -96,7 +106,17 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
     };
   }, [pipelineUploadVersion]);
 
-  function selectRevenueWorkbook(file, source = 'select') {
+  async function uploadRevenueWorkbook(file, url) {
+    const formData = new FormData();
+    formData.append('workbook', file);
+    formData.append('sheetName', 'Data');
+    const response = await fetch(url, { method: 'POST', body: formData });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || payload.error || 'Revenue upload failed.');
+    return payload.database;
+  }
+
+  async function selectRevenueWorkbook(file, source = 'select') {
     if (!file) {
       onForecastWorkbookChange?.(null);
       setRevenueError('');
@@ -109,9 +129,41 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
       return;
     }
 
-    onForecastWorkbookChange?.(file);
-    setSavedRevenue(null);
     setRevenueError('');
+    try {
+      const database = await uploadRevenueWorkbook(file, REVENUE_UPLOAD_URL);
+      onForecastWorkbookChange?.(file);
+      setSavedRevenue(database);
+      setPipelineUploadVersion((version) => version + 1);
+    } catch (err) {
+      onForecastWorkbookChange?.(null);
+      setRevenueError(err.message);
+    }
+  }
+
+  async function selectInsuranceRevenueWorkbook(file, source = 'select') {
+    if (!file) {
+      setInsuranceRevenueWorkbook(null);
+      setInsuranceRevenueError('');
+      return;
+    }
+
+    if (!WORKBOOK_PATTERN.test(file.name)) {
+      setInsuranceRevenueWorkbook(null);
+      setInsuranceRevenueError('Please ' + (source === 'drop' ? 'drop' : 'select') + ' an Insurance .xlsb, .xlsx, or .xlsm workbook.');
+      return;
+    }
+
+    setInsuranceRevenueError('');
+    try {
+      const database = await uploadRevenueWorkbook(file, INSURANCE_REVENUE_UPLOAD_URL);
+      setInsuranceRevenueWorkbook(file);
+      setSavedInsuranceRevenue(database);
+      setPipelineUploadVersion((version) => version + 1);
+    } catch (err) {
+      setInsuranceRevenueWorkbook(null);
+      setInsuranceRevenueError(err.message);
+    }
   }
 
   async function uploadPipelineWorkbook(file, url) {
@@ -182,6 +234,14 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
     : savedRevenue?.rowsSaved
       ? savedRevenue.rowsSaved.toLocaleString() + ' rows loaded from saved revenue data'
       : 'Supports .xlsb and .xlsx';
+  const insuranceRevenueTitle = insuranceRevenueWorkbook
+    ? insuranceRevenueWorkbook.name
+    : savedInsuranceRevenue?.sourceFilename || 'Drop your Insurance revenue workbook here';
+  const insuranceRevenueSubtitle = insuranceRevenueWorkbook
+    ? 'Insurance revenue workbook uploaded and merged'
+    : savedInsuranceRevenue?.rowsSaved
+      ? savedInsuranceRevenue.rowsSaved.toLocaleString() + ' Insurance rows merged with revenue data'
+      : 'Supports .xlsb and .xlsx';
   const pipelineTitle = pipelineWorkbook
     ? pipelineWorkbook.name
     : savedPipeline?.sourceFilename || 'Drop your pipeline workbook here';
@@ -235,6 +295,16 @@ export default function SlslSummary({ forecastWorkbook, onForecastWorkbookChange
             icon="revenue"
             isComplete={Boolean(forecastWorkbook || savedRevenue?.rowsSaved)}
             onFileSelect={selectRevenueWorkbook}
+          />
+          <UploadOption
+            className="revenue-upload insurance-revenue-upload"
+            label="Insurance Revenue"
+            title={insuranceRevenueTitle}
+            subtitle={insuranceRevenueSubtitle}
+            error={insuranceRevenueError}
+            icon="revenue"
+            isComplete={Boolean(insuranceRevenueWorkbook || savedInsuranceRevenue?.rowsSaved)}
+            onFileSelect={selectInsuranceRevenueWorkbook}
           />
           <UploadOption
             className="pipeline-upload"

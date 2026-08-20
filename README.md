@@ -142,3 +142,21 @@ Returns JSON with:
 `POST /api/forecast/export.csv`
 
 Uses the same fields and returns a CSV download.
+# Sales Dashboard
+
+## Node.js API fallback
+
+The Python/FastAPI backend remains the default API. A parallel Node.js fallback
+is available for environments where Python cannot be installed. It uses a
+separate SQLite database, so the two runtimes can run side by side safely.
+
+```bash
+npm install
+npm run api:node
+```
+
+The Node server listens on `http://127.0.0.1:3002`. To direct the frontend to
+it, start Vite with `VITE_API_BASE_URL=http://127.0.0.1:3002`.
+
+Core revenue, pipeline, SLS, SLSM, SLSL, metadata, and SLS breakdown APIs are
+available with the same route names as the Python service.
