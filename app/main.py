@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from .database import (
     load_demand_creation_upload,
+    load_ra_upload,
     load_insurance_revenue_forecast_metadata,
     load_pending_validation_metadata,
     load_insurance_pipeline_upload_metadata,
@@ -38,6 +39,7 @@ from .database import (
     load_wins_lost_metadata,
     replace_pending_validation,
     replace_demand_creation_upload,
+    replace_ra_upload,
     replace_pipeline_upload,
     replace_insurance_pipeline_upload,
     replace_insurance_revenue_forecast,
@@ -49,7 +51,7 @@ from .database import (
     replace_target_upload,
     replace_wins_lost,
 )
-from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _matches_name_permutation, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_ra_workbook, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
 
 
 OPENAPI_TAGS = [
@@ -241,6 +243,46 @@ async def insurance_forecast_upload_metadata() -> dict:
     return {"available": metadata["available"], "database": metadata}
 
 
+@app.get("/api/bcmi-orig/revenue-summary")
+async def bcmi_orig_revenue_summary() -> dict:
+    """Aggregate BCM and Insurance forecasted Net Revenue for BCMI - Orig."""
+    headers, rows, source_filename = await asyncio.to_thread(load_revenue_forecast)
+    if not rows:
+        return {"available": False, "metrics": {}, "database": {"table": "revenue_forecast", "rowsSaved": 0}}
+
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    period_columns = {
+        "aug": _get_column(col_map, "Serviceline_Aug 2026", "Market_Aug 2026"),
+        "q3": _get_column(col_map, "Q3'26 (SL)", "Q3 26 (SL)"),
+        "q4": _get_column(col_map, "Q4'26 (SL)", "Q4 26 (SL)"),
+        "year": _get_column(col_map, "FY 26 (SL)", "FY26 (SL)"),
+    }
+    missing = [label for label, index in period_columns.items() if index is None]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
+
+    source_column = _get_column(col_map, "P&L Source", "PLSource")
+    header_column = _get_column(col_map, "P&L Header", "PLHeader")
+    totals = {period: 0.0 for period in period_columns}
+    for row in rows:
+        if source_column is not None:
+            source = str(row[source_column] if source_column < len(row) else "").strip()
+            if source != "IC/Forecasted":
+                continue
+        if header_column is not None:
+            header = str(row[header_column] if header_column < len(row) else "").strip()
+            if header != "Net Revenue":
+                continue
+        for period, index in period_columns.items():
+            totals[period] += _to_number(row[index] if index is not None and index < len(row) else 0)
+
+    return {
+        "available": True,
+        "metrics": totals,
+        "database": {"table": "revenue_forecast", "rowsSaved": len(rows), "sourceFilename": source_filename},
+    }
+
+
 @app.get("/api/forecast/current")
 async def current_forecast(slsName: str = Query("Saxena, Gaurav")) -> dict:
     try:
@@ -377,6 +419,51 @@ async def pipeline_upload_metadata() -> dict:
             "insuranceRowsSaved": insurance_metadata["rowsSaved"],
         }
     return {"available": metadata["available"], "database": metadata}
+
+
+@app.get("/api/quality-pipeline/summary")
+async def quality_pipeline_summary() -> dict:
+    """Return the saved BCM and Insurance qualified-pipeline profile."""
+    headers, rows, source_filename = await asyncio.to_thread(load_pipeline_upload)
+    if not rows:
+        return {"available": False, "rows": [], "database": {"table": "pipeline_upload", "rowsSaved": 0}}
+
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    stage_column = _get_column(col_map, "Grouped Sales Stage")
+    sub_status_column = _get_column(col_map, "Sub-Status")
+    period_columns = {
+        "q3": _get_column(col_map, "CY Q3 $"),
+        "q4": _get_column(col_map, "CY Q4 $"),
+        "year": _get_column(col_map, "CY $", "Current Year Revenue (converted)"),
+        "yearPlus": _get_column(col_map, "NY $"),
+        "total": _get_column(col_map, "Net TCV Share (converted)", "Net TCV Share"),
+    }
+    if stage_column is None or any(index is None for index in period_columns.values()):
+        missing = [name for name, index in period_columns.items() if index is None]
+        if stage_column is None:
+            missing.append("Grouped Sales Stage")
+        raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
+
+    totals = {
+        "Qualified": {period: 0.0 for period in period_columns},
+        "Unqualified": {period: 0.0 for period in period_columns},
+    }
+    for row in rows:
+        stage = str(row[stage_column] if stage_column < len(row) else "").strip()
+        label = "Qualified" if stage == "Qualified" else "Unqualified" if stage == "Un-Qualified" else None
+        if not label:
+            continue
+        sub_status = str(row[sub_status_column] if sub_status_column is not None and sub_status_column < len(row) else "").strip().lower()
+        if sub_status == "negotiation":
+            continue
+        for period, index in period_columns.items():
+            totals[label][period] += _to_number(row[index] if index is not None and index < len(row) else 0)
+
+    return {
+        "available": True,
+        "rows": [{"label": label, **values} for label, values in totals.items()],
+        "database": {"table": "pipeline_upload", "rowsSaved": len(rows), "sourceFilename": source_filename},
+    }
 
 
 @app.get("/api/pipeline/insurance/upload/metadata")
@@ -847,6 +934,109 @@ async def upload_demand_creation(workbook: UploadFile = File(...)) -> dict:
 @app.get("/api/demand-creation/current", tags=["Demand Creation"])
 async def current_demand_creation() -> dict:
     return await asyncio.to_thread(load_demand_creation_upload)
+
+
+@app.post("/api/reports/ra/upload", tags=["Reports"])
+async def upload_ra_workbook(workbook: UploadFile = File(...)) -> dict:
+    try:
+        source_filename = workbook.filename or ""
+        parsed = await asyncio.to_thread(parse_ra_workbook, await workbook.read(), source_filename)
+        metadata = await asyncio.to_thread(replace_ra_upload, source_filename, parsed)
+        return {"available": metadata["available"], "sourceFilename": source_filename, "database": metadata, **parsed}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/ra/current", tags=["Reports"])
+async def current_ra_workbook() -> dict:
+    return await asyncio.to_thread(load_ra_upload)
+
+
+@app.get("/api/bcmi-orig/ra-summary", tags=["Reports"])
+async def bcmi_orig_ra_summary() -> dict:
+    ra_upload = await asyncio.to_thread(load_ra_upload)
+    if not ra_upload.get("available"):
+        return {"available": False, "metrics": {}}
+
+    sheets = {sheet.get("sheetName"): sheet for sheet in ra_upload.get("sheets", [])}
+    q3_sheet = sheets.get("Q3 BU RA - Americas")
+    q4_sheet = sheets.get("Q4 RA - Americas")
+    if not q3_sheet or not q4_sheet:
+        raise HTTPException(status_code=400, detail="The saved RA upload must contain the Q3 and Q4 Americas sheets.")
+
+    def amount(sheet: dict, header_fragment: str) -> float:
+        headers = sheet.get("headers", [])
+        index = next((position for position, header in enumerate(headers) if header_fragment.lower() in str(header).lower()), None)
+        if index is None:
+            raise HTTPException(status_code=400, detail=f'Missing "{header_fragment}" column in {sheet.get("sheetName")}.')
+        return sum(_to_number(row[index] if index < len(row) else 0) for row in sheet.get("rows", []))
+
+    def month_amount(sheet: dict, month: str) -> float:
+        indexes = [index for index, header in enumerate(sheet.get("headers", [])) if month in str(header)]
+        return sum(_to_number(row[index] if index < len(row) else 0) for row in sheet.get("rows", []) for index in indexes)
+
+    q3 = amount(q3_sheet, "Q3'26 Revenue")
+    q4 = amount(q4_sheet, "Q4'26 Revenue")
+    aug = month_amount(q3_sheet, "2026-08-01")
+    return {
+        "available": True,
+        "metrics": {"aug": aug, "q3": q3, "q4": q4, "year": q3 + q4},
+        "sourceFilename": ra_upload.get("sourceFilename"),
+    }
+
+
+@app.get("/api/bcmi-orig/biweekly-wins", tags=["Pipeline"])
+async def bcmi_orig_biweekly_wins() -> dict:
+    """Return individual top wins from the latest saved Bi-Weekly Wins period."""
+    headers, rows, source_filename = await asyncio.to_thread(load_pipeline_upload)
+    if not rows:
+        return {"available": False, "rows": []}
+
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    columns = {
+        "stage": _get_column(col_map, "Grouped Sales Stage"),
+        "week": _get_column(col_map, "Week Closed"),
+        "year": _get_column(col_map, "Year Closed"),
+        "account": _get_column(col_map, "Financial Ultimate Parent Account", "Account Name"),
+        "description": _get_column(col_map, "Opportunity Name"),
+        "netTcv": _get_column(col_map, "Net TCV Share", "Net TCV Share (converted)"),
+        "cyRevenue": _get_column(col_map, "CY REVENUE $", "Current Year Revenue (converted)"),
+    }
+    if any(index is None for index in columns.values()):
+        missing = [name for name, index in columns.items() if index is None]
+        raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
+
+    def week_number(value: object) -> int | None:
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group()) if match else None
+
+    won_rows = []
+    for row in rows:
+        stage = str(row[columns["stage"]] if columns["stage"] is not None and columns["stage"] < len(row) else "").strip()
+        year = str(row[columns["year"]] if columns["year"] is not None and columns["year"] < len(row) else "")
+        week = week_number(row[columns["week"]] if columns["week"] is not None and columns["week"] < len(row) else None)
+        if stage == "Won" and year.startswith("2026") and week is not None:
+            won_rows.append((week, row))
+    if not won_rows:
+        return {"available": False, "rows": []}
+
+    latest_week = max(week for week, _row in won_rows)
+    latest_wins = [row for week, row in won_rows if week == latest_week]
+    top_wins = sorted(latest_wins, key=lambda row: _to_number(row[columns["netTcv"]] if columns["netTcv"] is not None and columns["netTcv"] < len(row) else 0), reverse=True)[:5]
+    return {
+        "available": True,
+        "latestWeek": latest_week,
+        "rows": [
+            {
+                "account": str(row[columns["account"]] if columns["account"] is not None and columns["account"] < len(row) else "").strip(),
+                "description": str(row[columns["description"]] if columns["description"] is not None and columns["description"] < len(row) else "").strip(),
+                "netTcv": _to_number(row[columns["netTcv"]] if columns["netTcv"] is not None and columns["netTcv"] < len(row) else 0),
+                "cyRevenue": _to_number(row[columns["cyRevenue"]] if columns["cyRevenue"] is not None and columns["cyRevenue"] < len(row) else 0),
+            }
+            for row in top_wins
+        ],
+        "sourceFilename": source_filename,
+    }
 
 
 @app.get("/api/reports/export", tags=["Reports"])

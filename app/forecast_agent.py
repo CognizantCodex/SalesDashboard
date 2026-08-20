@@ -33,6 +33,7 @@ DEAL_TYPE_COLUMNS = ("Grouped Deal Type", "Group Deal Type", "Deal Type")
 TARGETS_SHEET = "SLM-SLS-Pivot"
 TARGET_TOTAL_LABEL = "Grand Total"
 DEMAND_CREATION_SHEETS = {"BCM": "BCM", "INS2": "INS2"}
+RA_WORKBOOK_SHEETS = ("Q3 BU RA - Americas", "Q4 RA - Americas")
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -1135,6 +1136,41 @@ def parse_demand_creation_workbook(file_bytes: bytes, filename: str) -> dict[str
             ],
         },
     }
+
+
+def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
+    """Extract the actionable rows from the two Americas RA workbook sheets."""
+    sheets: list[dict[str, Any]] = []
+    for sheet_name in RA_WORKBOOK_SHEETS:
+        values = _read_sheet(file_bytes, filename, sheet_name)
+        header_index = next(
+            (
+                index
+                for index, row in enumerate(values)
+                if "Account" in {str(cell or "").strip() for cell in row}
+                and "BU" in {str(cell or "").strip() for cell in row}
+            ),
+            None,
+        )
+        if header_index is None:
+            raise ValueError(f'Missing the Account and BU header row in "{sheet_name}".')
+
+        headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(values[header_index])]
+        account_index = headers.index("Account")
+        rows = [
+            [_ra_serializable_cell(_cell(row, index)) for index in range(len(headers))]
+            for row in values[header_index + 1 :]
+            if str(_cell(row, account_index) or "").strip()
+        ]
+        sheets.append({"sheetName": sheet_name, "headers": headers, "rows": rows, "rowsSaved": len(rows)})
+
+    return {"sheets": sheets, "rowsSaved": sum(sheet["rowsSaved"] for sheet in sheets)}
+
+
+def _ra_serializable_cell(value: Any) -> Any:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
 
 
 def analyze_workbook(file_bytes: bytes, filename: str, sls_name: str, sheet_name: str = "Data") -> dict[str, Any]:

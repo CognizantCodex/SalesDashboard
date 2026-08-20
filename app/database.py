@@ -25,6 +25,7 @@ TARGET_UPLOAD_TABLE = "target_upload"
 TARGET_SLS_TABLE = "target_sls"
 TARGET_ACCOUNT_TABLE = "target_accounts"
 DEMAND_CREATION_TABLE = "demand_creation_upload"
+RA_UPLOAD_TABLE = "ra_upload"
 
 
 def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str, table_name: str = "revenue_forecast") -> int:
@@ -500,6 +501,48 @@ def load_demand_creation_upload() -> dict[str, Any]:
         return {"available": False, "sourceFilename": None, "series": [], "totals": {}, "rowsProcessed": {}}
     payload = json.loads(row[1] or "{}")
     return {"available": bool(payload.get("series")), "sourceFilename": row[0], **payload}
+
+
+def replace_ra_upload(source_filename: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist the latest Q3/Q4 Americas RA workbook extraction."""
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    rows_saved = int(payload.get("rowsSaved") or 0)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(RA_UPLOAD_TABLE)}")
+        conn.execute(
+            f"""
+            CREATE TABLE {_quote_identifier(RA_UPLOAD_TABLE)} (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                source_filename TEXT NOT NULL,
+                rows_saved INTEGER NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            f"INSERT INTO {_quote_identifier(RA_UPLOAD_TABLE)} (id, source_filename, rows_saved, payload_json) VALUES (1, ?, ?, ?)",
+            (source_filename, rows_saved, json.dumps(payload)),
+        )
+
+    return {"available": bool(payload.get("sheets")), "table": RA_UPLOAD_TABLE, "rowsSaved": rows_saved, "sourceFilename": source_filename}
+
+
+def load_ra_upload() -> dict[str, Any]:
+    if not DATABASE_PATH.exists():
+        return {"available": False, "sourceFilename": None, "sheets": [], "rowsSaved": 0}
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        if not _table_exists(conn, RA_UPLOAD_TABLE):
+            return {"available": False, "sourceFilename": None, "sheets": [], "rowsSaved": 0}
+        row = conn.execute(
+            f"SELECT source_filename, rows_saved, payload_json FROM {_quote_identifier(RA_UPLOAD_TABLE)} WHERE id = 1"
+        ).fetchone()
+
+    if not row:
+        return {"available": False, "sourceFilename": None, "sheets": [], "rowsSaved": 0}
+    payload = json.loads(row[2] or "{}")
+    return {"available": bool(payload.get("sheets")), "sourceFilename": row[0], "rowsSaved": row[1], **payload}
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:

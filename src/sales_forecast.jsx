@@ -12,6 +12,8 @@ import SlslSummary from './slsl_summary.jsx';
 import UploadTargets from './upload_targets.jsx';
 import DemandCreation from './demand_creation.jsx';
 import BcmiDashboard from './bcmi_dashboard.jsx';
+import BcmiOrig from './bcmi_orig.jsx';
+import QualityPipeline from './quality_pipeline.jsx';
 import ReportGeneration from './report_generation.jsx';
 import { apiUrl } from './api.js';
 
@@ -21,8 +23,10 @@ const NAV_ITEMS = [
   { id: 'sls', label: 'SLS' },
   { id: 'targets', label: 'Target' },
   { id: 'demand-creation', label: 'Demand Creation' },
-  { id: 'bcmi', label: 'BCMI' }
-  , { id: 'report-generation', label: 'Report Generation' }
+  { id: 'bcmi', label: 'BCMI' },
+  { id: 'bcmi-orig', label: 'BCM - Orig' },
+  { id: 'quality-pipeline', label: 'Quality Pipeline' },
+  { id: 'report-generation', label: 'Report Generation' }
 ];
 
 function roundedMillions(value) {
@@ -178,6 +182,22 @@ export default function SalesForecast() {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
         <BcmiDashboard />
+      </DashboardShell>
+    );
+  }
+
+  if (activeDashboard === 'bcmi-orig') {
+    return (
+      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
+        <BcmiOrig />
+      </DashboardShell>
+    );
+  }
+
+  if (activeDashboard === 'quality-pipeline') {
+    return (
+      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
+        <QualityPipeline />
       </DashboardShell>
     );
   }

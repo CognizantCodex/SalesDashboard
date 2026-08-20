@@ -34,6 +34,26 @@ function parseWorkbook(file, sheetName = 'Data') {
   const rows = raw.slice(headerIndex + 1).filter((row) => row.some((cell) => cell !== null && String(cell).trim() !== ''));
   return { headers, rows };
 }
+function parseRaWorkbook(file) {
+  if (!file?.buffer) throw new Error('An RA workbook is required.');
+  const workbook = XLSX.read(file.buffer, { type: 'buffer', cellDates: true });
+  const sheetNames = ['Q3 BU RA - Americas', 'Q4 RA - Americas'];
+  const extracted = sheetNames.map((sheetName) => {
+    if (!workbook.SheetNames.includes(sheetName)) throw new Error(`Sheet "${sheetName}" was not found in workbook.`);
+    const values = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true });
+    const headerIndex = values.findIndex((row) => Array.isArray(row) && row.map((cell) => String(cell ?? '').trim()).includes('Account') && row.map((cell) => String(cell ?? '').trim()).includes('BU'));
+    if (headerIndex < 0) throw new Error(`Missing the Account and BU header row in "${sheetName}".`);
+    const headers = values[headerIndex].map((cell, index) => (cell instanceof Date ? cell.toISOString().slice(0, 10) : String(cell ?? '').trim()) || `Column ${index + 1}`);
+    const accountIndex = headers.indexOf('Account');
+    return { sheetName, headers, rows: values.slice(headerIndex + 1).filter((row) => String(row[accountIndex] ?? '').trim()) };
+  });
+  const headers = ['Sheet Name', ...extracted[0].headers];
+  const rows = extracted.flatMap(({ sheetName, headers: sourceHeaders, rows: sourceRows }) => {
+    const positions = new Map(sourceHeaders.map((header, index) => [key(header), index]));
+    return sourceRows.map((row) => [sheetName, ...headers.slice(1).map((header) => positions.has(key(header)) ? row[positions.get(key(header))] : null)]);
+  });
+  return { headers, rows };
+}
 
 function save(kind, parsed, filename) {
   db.prepare(`INSERT INTO node_uploads(kind, source_filename, headers_json, rows_json, updated_at)
@@ -86,13 +106,90 @@ function pipelineMetrics(data, name, dimension = 'sls', type = 'pipeline') {
 }
 function pipelineResult(name, dimension = 'sls') { const data = pipelineData(); const metrics = pipelineMetrics(data, name, dimension); return { available: data.rows.length > 0, query: name, year: new Date().getFullYear(), matchedSlsNames: uniquePeople(data, dimension).filter((item) => key(item) === key(name)), metrics, accounts: [], rows: [], database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }; }
 function forecastResult(name, dimension = 'sls') { const data = revenueData(); const metrics = revenueMetrics(data, name, dimension); return { available: data.rows.length > 0, query: name, matchedSlsNames: uniquePeople(data, dimension).filter((item) => key(item) === key(name)), metrics, accounts: [], rows: [], database: { table: 'revenue_forecast', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }; }
+function qualityPipelineSummary() {
+  const data = pipelineData();
+  if (!data.rows.length) return { available: false, rows: [], database: { table: 'pipeline_upload', rowsSaved: 0 } };
+  const stageIndex = column(data.headers, ['grouped sales stage']);
+  const subStatusIndex = column(data.headers, ['sub-status']);
+  const periods = {
+    q3: column(data.headers, ['cy q3 $']),
+    q4: column(data.headers, ['cy q4 $']),
+    year: column(data.headers, ['cy $', 'current year revenue (converted)']),
+    yearPlus: column(data.headers, ['ny $']),
+    total: column(data.headers, ['net tcv share (converted)', 'net tcv share'])
+  };
+  const totals = Object.fromEntries(['Qualified', 'Unqualified'].map((label) => [label, Object.fromEntries(Object.keys(periods).map((period) => [period, 0]))]));
+  data.rows.forEach((row) => {
+    const stage = String(value(row, stageIndex) || '').trim();
+    const label = stage === 'Qualified' ? 'Qualified' : stage === 'Un-Qualified' ? 'Unqualified' : null;
+    if (!label || key(value(row, subStatusIndex)) === 'negotiation') return;
+    Object.entries(periods).forEach(([period, index]) => { totals[label][period] += number(value(row, index)); });
+  });
+  return { available: true, rows: Object.entries(totals).map(([label, values]) => ({ label, ...values })), database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } };
+}
+function bcmiOrigRevenueSummary() {
+  const data = revenueData();
+  if (!data.rows.length) return { available: false, metrics: {}, database: { table: 'revenue_forecast', rowsSaved: 0 } };
+  const periods = {
+    aug: column(data.headers, ['serviceline_aug 2026', 'market_aug 2026']),
+    q3: column(data.headers, ["q3'26 (sl)", 'q3 26 (sl)']),
+    q4: column(data.headers, ["q4'26 (sl)", 'q4 26 (sl)']),
+    year: column(data.headers, ['fy 26 (sl)', 'fy26 (sl)'])
+  };
+  const sourceIndex = column(data.headers, ['p&l source', 'plsource']);
+  const headerIndex = column(data.headers, ['p&l header', 'plheader']);
+  const metrics = Object.fromEntries(Object.keys(periods).map((period) => [period, 0]));
+  data.rows.forEach((row) => {
+    if (sourceIndex >= 0 && String(value(row, sourceIndex) || '').trim() !== 'IC/Forecasted') return;
+    if (headerIndex >= 0 && String(value(row, headerIndex) || '').trim() !== 'Net Revenue') return;
+    Object.entries(periods).forEach(([period, index]) => { metrics[period] += number(value(row, index)); });
+  });
+  return { available: true, metrics, database: { table: 'revenue_forecast', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } };
+}
+function bcmiOrigRaSummary() {
+  const data = raw('ra_upload');
+  if (!data.rows.length) return { available: false, metrics: {} };
+  const sheetIndex = 0;
+  const valueAt = (row, index) => number(value(row, index));
+  const indexes = (fragment) => data.headers.map((header, index) => key(header).includes(key(fragment)) ? index : -1).filter((index) => index >= 0);
+  const q3Index = indexes("q3'26 revenue")[0];
+  const q4Index = indexes("q4'26 revenue")[0];
+  if (q3Index === undefined || q4Index === undefined) return { available: false, metrics: {} };
+  const sum = (sheetName, indexList) => data.rows.filter((row) => value(row, sheetIndex) === sheetName).reduce((total, row) => total + indexList.reduce((subtotal, index) => subtotal + valueAt(row, index), 0), 0);
+  const q3 = sum('Q3 BU RA - Americas', [q3Index]);
+  const q4 = sum('Q4 RA - Americas', [q4Index]);
+  const aug = sum('Q3 BU RA - Americas', indexes('2026-08-01'));
+  return { available: true, metrics: { aug, q3, q4, year: q3 + q4 }, sourceFilename: data.sourceFilename };
+}
+function bcmiOrigBiweeklyWins() {
+  const data = pipelineData();
+  const indexes = {
+    stage: column(data.headers, ['grouped sales stage']),
+    week: column(data.headers, ['week closed']),
+    year: column(data.headers, ['year closed']),
+    account: column(data.headers, ['financial ultimate parent account', 'account name']),
+    description: column(data.headers, ['opportunity name']),
+    netTcv: column(data.headers, ['net tcv share', 'net tcv share (converted)']),
+    cyRevenue: column(data.headers, ['cy revenue $', 'current year revenue (converted)'])
+  };
+  const weekNumber = (item) => { const match = String(item ?? '').match(/\d+/); return match ? Number(match[0]) : null; };
+  const wins = data.rows.map((row) => ({ row, week: weekNumber(value(row, indexes.week)) })).filter(({ row, week }) => String(value(row, indexes.stage) || '').trim() === 'Won' && String(value(row, indexes.year) || '').startsWith('2026') && week !== null);
+  if (!wins.length) return { available: false, rows: [] };
+  const latestWeek = Math.max(...wins.map(({ week }) => week));
+  const rows = wins.filter((item) => item.week === latestWeek).sort((a, b) => number(value(b.row, indexes.netTcv)) - number(value(a.row, indexes.netTcv))).slice(0, 5).map(({ row }) => ({ account: String(value(row, indexes.account) || '').trim(), description: String(value(row, indexes.description) || '').trim(), netTcv: number(value(row, indexes.netTcv)), cyRevenue: number(value(row, indexes.cyRevenue)) }));
+  return { available: true, latestWeek, rows, sourceFilename: data.sourceFilename };
+}
 
 app.get('/health', (_, res) => res.json({ ok: true, agent: 'sls-forecast-agent-node', backend: 'node' }));
 function mergedMetadata(primary, insurance) { const a = metadata(primary), b = metadata(insurance); return { available: a.available || b.available, database: { ...a, available: a.available || b.available, rowsSaved: a.rowsSaved + b.rowsSaved, sourceFilename: [a.sourceFilename, b.sourceFilename].filter(Boolean).join(' + '), insuranceRowsSaved: b.rowsSaved } }; }
 app.get('/api/forecast/current/metadata', (_, res) => res.json(mergedMetadata('revenue_forecast', 'insurance_revenue_forecast')));
 app.get('/api/forecast/insurance/upload/metadata', (_, res) => res.json({ available: metadata('insurance_revenue_forecast').available, database: metadata('insurance_revenue_forecast') }));
+app.get('/api/bcmi-orig/revenue-summary', (_, res) => res.json(bcmiOrigRevenueSummary()));
+app.get('/api/bcmi-orig/ra-summary', (_, res) => res.json(bcmiOrigRaSummary()));
+app.get('/api/bcmi-orig/biweekly-wins', (_, res) => res.json(bcmiOrigBiweeklyWins()));
 app.get('/api/pipeline/upload/metadata', (_, res) => res.json(mergedMetadata('pipeline_upload', 'insurance_pipeline_upload')));
 app.get('/api/pipeline/insurance/upload/metadata', (_, res) => res.json({ available: metadata('insurance_pipeline_upload').available, database: metadata('insurance_pipeline_upload') }));
+app.get('/api/quality-pipeline/summary', (_, res) => res.json(qualityPipelineSummary()));
 app.get('/api/slsm/forecast/current/metadata', (_, res) => res.json(mergedMetadata('revenue_forecast', 'insurance_revenue_forecast')));
 app.get('/api/slsm/pipeline/upload/metadata', (_, res) => res.json(mergedMetadata('pipeline_upload', 'insurance_pipeline_upload')));
 
@@ -100,12 +197,14 @@ function uploadRoute(pathname, kind, sheet = 'Data') { app.post(pathname, upload
 uploadRoute('/api/forecast/upload', 'revenue_forecast'); uploadRoute('/api/forecast/insurance/upload', 'insurance_revenue_forecast');
 uploadRoute('/api/pipeline/upload', 'pipeline_upload'); uploadRoute('/api/pipeline/insurance/upload', 'insurance_pipeline_upload');
 uploadRoute('/api/slsm/forecast/upload', 'revenue_forecast', 'SL_Forecast -2026'); uploadRoute('/api/slsm/pipeline/upload', 'pipeline_upload');
+app.post('/api/reports/ra/upload', upload.single('workbook'), (req, res) => { try { const record = save('ra_upload', parseRaWorkbook(req.file), req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record }); } catch (error) { res.status(400).json({ detail: error.message }); } });
 
 app.get('/api/forecast/current', (req,res) => res.json(forecastResult(req.query.slsName || '', 'sls')));
 app.get('/api/slsm/forecast/current', (req,res) => res.json(forecastResult(req.query.slsmName || '', 'slsm')));
 app.get('/api/slsm/forecast/options/current', (_,res) => { const data = revenueData(); const pipe = pipelineData(); res.json({ available: data.rows.length + pipe.rows.length > 0, options: [...new Set([...uniquePeople(data, 'slsm'), ...uniquePeople(pipe, 'slsm')])].sort((a,b)=>a.localeCompare(b)), database: { table: 'revenue_forecast', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }); });
 app.get('/api/pipeline/summary/current', (req,res) => res.json(pipelineResult(req.query.slsName || '', 'sls')));
 app.get('/api/slsm/pipeline/summary/current', (req,res) => res.json(pipelineResult(req.query.slsmName || '', 'slsm')));
+app.get('/api/reports/ra/current', (_, res) => { const record = metadata('ra_upload'); res.json({ available: record.available, sourceFilename: record.sourceFilename, rowsSaved: record.rowsSaved }); });
 for (const [route, dimension, query, type] of [['/api/won-lost/summary/current','sls','slsName','won'],['/api/slsm/won-lost/summary/current','slsm','slsmName','won'],['/api/pending-validation/summary/current','sls','slsName','pending'],['/api/slsm/pending-validation/summary/current','slsm','slsmName','pending']]) app.get(route, (req,res) => { const data = pipelineData(); const metrics = pipelineMetrics(data, req.query[query] || '', dimension, type); res.json({ available: data.rows.length > 0, query: req.query[query] || '', metrics, database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }); });
 app.get('/api/slsl/summary/current', (_, res) => { const rev = revenueData(), pipe = pipelineData(); const names = [...new Set([...uniquePeople(rev,'slsm'), ...uniquePeople(pipe,'slsm')])]; const rows = names.map((slsmName) => { const revenue = revenueMetrics(rev,slsmName,'slsm'), pipeline = pipelineMetrics(pipe,slsmName,'slsm'), won = pipelineMetrics(pipe,slsmName,'slsm','won'), pending = pipelineMetrics(pipe,slsmName,'slsm','pending'); const total = won.won + pending.pendingValidation; return { slsmName, revenue, pipeline, realizedTcv: { total, won: won.won, pendingValidation: pending.pendingValidation, rows: won.rows + pending.rows, labels: { total: money(total), won: won.labels.won, pendingValidation: pending.labels.pendingValidation } } }; }); res.json({ available: rows.length > 0, year: new Date().getFullYear(), rows, database: { revenue: { rowsSaved: rev.rows.length, sourceFilename: rev.sourceFilename }, pipeline: { rowsSaved: pipe.rows.length, sourceFilename: pipe.sourceFilename } } }); });
 app.get('/api/slsm/sls-breakdown/current', (req,res) => { const name = req.query.slsmName || ''; if (!name) return res.status(400).json({ detail: 'SLSM name is required.' }); const rev = revenueData(), pipe = pipelineData(); const names = [...new Set([...personRows(rev,name,'slsm').map((row)=>String(value(row,column(rev.headers,aliases.sls))||'').trim()), ...personRows(pipe,name,'slsm').map((row)=>String(value(row,column(pipe.headers,aliases.sls))||'').trim())])].filter(Boolean); const rows = names.map((slsName) => { const revenue=revenueMetrics(rev,slsName,'sls'), pipeline=pipelineMetrics(pipe,slsName,'sls'), won=pipelineMetrics(pipe,slsName,'sls','won'), pending=pipelineMetrics(pipe,slsName,'sls','pending'); const total=won.won+pending.pendingValidation; return {slsName,revenue,pipeline,realizedTcv:{total,won:won.won,pendingValidation:pending.pendingValidation,rows:won.rows+pending.rows,labels:{total:money(total),won:won.labels.won,pendingValidation:pending.labels.pendingValidation}}}; }).filter((row)=>[row.revenue.forecast,row.revenue.target,row.revenue.gap,row.pipeline.pipeline,row.pipeline.qualified,row.pipeline.unqualified,row.realizedTcv.total].some(Boolean)); res.json({available:rows.length>0,query:name,year:new Date().getFullYear(),rows}); });

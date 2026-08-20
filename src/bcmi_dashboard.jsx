@@ -2,73 +2,19 @@ import React from 'react';
 
 const forecastRows = [
   ['BCMI', '243', '261', '262.5', '268.4', '+2.8%', '+7.3', '2.5', '0.9', '-1.6', '254.4', '261.5', '-2.5%', '-6.8', '11.4', '9.9', '-1.5'],
-  ['Banking & Capital Markets - NA', '171.4', '186.8', '190.9', '196.3', '+5.1%', '+9.5', '1.3', '0.0', '-1.3', '181.4', '188.3', '-4.1%', '-8.0', '6.6', '4.0', '-2.6'],
+  ['Banking & Capital Markets - NA', '171.4', '186.8', '190.9', '196.3', '+5.1%', '+9.5', '1.3', '0.0', '-1.3', '181.4', '188.3', '-4.1%', '8.0', '6.6', '4.0', '-2.6'],
   ['Insurance 2', '72', '74', '71.6', '72.0', '-3.0%', '-2.0', '1.2', '0.9', '-0.3', '73.0', '73.2', '+1.7%', '+1.2', '4.8', '5.9', '+1.1'],
 ];
+const convertedDeals = [['PNC', 'Credit Card Modernization', 'Legacy Mod', '$1.4 M', '$1.4 M', '$0.12 M', '11 (8 on, 3 off)'], ['S&P Global', 'Index Prototyping', 'Managed Capacity', '$4.0 M', '$3.1 M', '$0.33 M', '14 (5 on, 9 off)'], ['', 'Revenue from Q3 Conversions', '', '', '', '$0.41 M', '']];
+const inProgressDeals = [['Edward Jones', 'Vendor Consolidation', 'Anthropic, OpenAI', '$47.5M', '$11M', '$.04M', '60 (10 on, 50 off)'], ['Morgan Stanley', 'MS@Work ramp up', 'OpenAI', '$8.2M', '$4.4M', '$.08M', '40 (10 on, 30 off)'], ['M&T Bank', 'Wealth Management Modernization', 'Modernization', '$1.4M', '$1.4M', '$.04M', '10 (8 on, 2 off)'], ['BNY', 'TCAP Analysis Framework', 'Azure', '$1.8M', '$1.8M', '$.04M', '20 (5 on, 15 off)'], ['Northern Trust', 'SQM RFP', 'OpenAI', '$76.8M', '$86.8M', '$.44M', '100 (20on, 80 off)'], ['Alter Domus', 'App Modernization', 'Modernization', '$16.8M', '$3.8M', '$.22M', '80 (all offshore)'], ['The Hartford', 'Mainframe Modernization', 'Mainframe Mod', '$10.5M', '$10M', '$0.8M', '20 (3 On, 17 Off)'], ['Lincoln', 'Licensing Deal', 'AWS Hosting & Licenses', '$65M', '$7.5M', '$0.5M', '6 (1 On, 5 Off)'], ['Voya', 'Benefit Focus Phase 2', 'MS Azure, Hyperscaler', '$6M', '$5.5M', '$0.50 M', '25 (2 On: 23 Off)'], ['Munich Re', 'HSB Engg Implementation', 'Frontier Model', '$1.3M', '$1M', '$0.30 M', '5 (1 On: 4 Off)'], ['S&P', 'Spice Index Builder', 'Modernization', '$4.0 M', '$3.1 M', '$0.39 M', '18 (5 on, 13 off)'], ['NECJI', 'Performance Testing for Core', 'Open AI, Azure', '$2.0 M', '$2.0 M', '$0.35M', '5 On']];
+const largeDeals = [['1', 'Edward Jones', 'GCC', '$85 M', ''], ['2', 'Northern Trust', 'SQM', '$76.8 M', ''], ['3', 'Edward Jones', 'Consolidation', '$11 M', ''], ['4', 'TFS', 'Online Banking Portal', '$2.8 M', '$0.25 M'], ['5', '', '', '', '']];
+const wins = [['1', 'Truist', 'GREC Direct – Perl to .Net/React migration', '$1.1 M', '$0.2 M', 'Oct-26'], ['2', 'Lincoln', 'AWS & Mfaas Hosting', '$6.4 M', '$0.2 M', 'Oct-26'], ['3', '', '', '', '', ''], ['4', '', '', '', '', '']];
+const dealHeaders = ['Account', 'Deal Name', 'Category', 'Overall TCV', 'SEG Share', "Q3’26 Rev.", 'No. of FTEs'];
 
-const deals = [
-  ['The Hartford', 'Bond Modernization', 'Mainframe Mod', '$860k', '$860k', '$0.1M', '20 (2 On, 18 Off)'],
-  ['Lincoln', 'AWS Hosting Services, App Dev and Licensing', 'AWS - Hyperscaler', '$65M', '$7.5M', '$0.5M', ''],
-  ['DOXA', 'Application Services', '', '$1.8M', '$1.8M', '$0.12M', '8 (1 On, 7 Off)'],
-  ['TIAA', 'Wealth Brokerage', 'Anthropic', '$0.6M', '$0.6M', '$0.1M', '8 (1 On, 7 Off)'],
-  ['Northern Trust', 'SQM RFP', 'OpenAI', '$76.8M', '$86.8M', '$0.38M', '100 (20 On, 80 Off)'],
-  ['UBS', '11 onshore QA resources', '', '$0.6M', '$0.07M', '$0.13M', '11 (all offshore)'],
-  ['Morgan Stanley', 'MS@Work additional roles', 'OpenAI', '$8.2M', '$4.4M', '$.02M', '40 (10 on, 30 off)'],
-  ['S&P', 'Index Prototyping Platform & SIB – Spice Index Builders', '', '$2.5M', '$2.0M', '$0.25M', '13 (5 on, 8 off)'],
-  ['Wells Fargo', 'FDEs for AI CoE', 'Devin', '$1.1M', '$1.1M', '$0.13M', '10 (5 on, 5 off)'],
-  ['JPMC', 'HR Tech Employee Product App Dev-JUL 2026', '', '$2.1M', '$2.1M', '$0.14M', '10 On, 10 off'],
-  ['', 'Other Deals in pipeline -', '', '', '', '$0.5M', ''],
-];
-
-function ForecastCell({ value, index }) {
-  const isDiff = [6, 9, 13, 16].includes(index);
-  const positive = String(value).startsWith('+');
-  const negative = String(value).startsWith('-');
-  return <td className={isDiff ? (positive ? 'bcmi-positive' : negative ? 'bcmi-negative' : '') : ''}>{value}</td>;
-}
+function ForecastCell({ value, index }) { const isDiff = [6, 9, 13, 16].includes(index); const positive = String(value).startsWith('+') || (index === 13 && value === '8.0'); const negative = String(value).startsWith('-'); return <td className={isDiff ? (positive ? 'bcmi-positive' : negative ? 'bcmi-negative' : '') : ''}>{value}</td>; }
+function DealTable({ rows, converted = false }) { return <table className={'bcmi-q4-deals-table' + (converted ? ' bcmi-converted-table' : '')}><thead><tr>{dealHeaders.map((label) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.map((value, column) => <td key={column}>{value}</td>)}</tr>)}</tbody></table>; }
+function SideTable({ title, headers, rows, total }) { return <section className="bcmi-side-panel"><h2>{title}</h2><table><thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.map((value, column) => <td key={column}>{value}</td>)}</tr>)}{total && <tr className="bcmi-side-total"><td /><td colSpan="2">Total</td><td /><td>{total}</td><td /></tr>}</tbody></table></section>; }
 
 export default function BcmiDashboard() {
-  return (
-    <>
-      <header>
-        <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" /></svg>
-        <h1>BCMI</h1>
-      </header>
-      <main className="container bcmi-page bcmi-executive-page">
-        <h2 className="bcmi-wordmark">BCMI</h2>
-        <section className="bcmi-forecast-wrap" aria-label="BCMI revenue forecast and risk adjustment">
-          <table className="bcmi-forecast-table">
-            <thead>
-              <tr><th rowSpan="2">BU</th><th rowSpan="2">Q1'26</th><th rowSpan="2">Q2'26</th><th colSpan="4">Q3 Revenue Forecast</th><th colSpan="3">Risk Adjustment</th><th colSpan="4">Q4 Revenue Forecast</th><th colSpan="3">Risk Adjustment</th></tr>
-              <tr>{['Prior Commit', 'Current Commit', 'QoQ', 'Diff.', 'Prior Commit', 'Current Commit', 'Diff.', 'Prior Commit', 'Current Commit', 'QoQ', 'Diff.', 'Prior Commit', 'Current Commit', 'Diff.'].map((label, index) => <th key={`${label}-${index}`}>{label}</th>)}</tr>
-            </thead>
-            <tbody>{forecastRows.map((row, rowIndex) => <tr key={row[0]}>{row.map((value, index) => index === 0 ? <th key={index} scope="row" className={rowIndex ? 'bcmi-child-bu' : ''}>{value}</th> : <ForecastCell key={index} value={value} index={index} />)}</tr>)}</tbody>
-          </table>
-        </section>
-        <hr className="bcmi-rule" />
-        <h2 className="bcmi-section-heading">Q3 RA Coverage Deals</h2>
-        <section className="bcmi-deal-layout">
-          <div className="bcmi-deals-wrap">
-            <table className="bcmi-deals-table">
-              <thead><tr>{['Account', 'Deal Name', 'Category (Frontier Model /Mainframe/ Hyperscaler etc)', 'Overall TCV', 'SEG Share', "Q3'26 Rev.", 'No. of FTEs'].map((label) => <th key={label}>{label}</th>)}</tr></thead>
-              <tbody>
-                {deals.map((row, index) => <tr key={`${row[0]}-${index}`}>{row.map((value, column) => <td key={column}>{value}</td>)}</tr>)}
-                <tr className="bcmi-deals-total"><td colSpan="5">Total</td><td>$2.37 M</td><td /></tr>
-              </tbody>
-            </table>
-          </div>
-          <aside className="bcmi-large-deals">
-            <h2>Large deals: Proactive and RFP’s</h2>
-            <ol>
-              <li>Illumifin Managed Services - $120Mn over 5 years</li>
-              <li>Lincoln Financial Vendor Consolidation - $175M over 5 Year</li>
-              <li>Edward Jones L1/L2/SRE - $18M</li>
-              <li>Truist – Data Estate Modernization RFP ($32 M, SEG $9M)</li>
-              <li>LPL UAT Services - $8M</li>
-            </ol>
-          </aside>
-        </section>
-      </main>
-    </>
-  );
+  return <><header><svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" /></svg><h1>BCMI</h1></header><main className="container bcmi-page bcmi-executive-page bcmi-q4-page"><h2 className="bcmi-wordmark">BCMI...continued</h2><section className="bcmi-forecast-wrap" aria-label="BCMI revenue forecast and risk adjustment"><table className="bcmi-forecast-table"><thead><tr><th rowSpan="2">BU</th><th rowSpan="2">Q1'26</th><th rowSpan="2">Q2'26</th><th colSpan="4">Q3 Revenue Forecast</th><th colSpan="3">Risk Adjustment</th><th colSpan="4">Q4 Revenue Forecast</th><th colSpan="3">Risk Adjustment</th></tr><tr>{['Prior Commit', 'Current Commit', 'QoQ', 'Diff.', 'Prior Commit', 'Current Commit', 'Diff.', 'Prior Commit', 'Current Commit', 'QoQ', 'Diff.', 'Prior Commit', 'Current Commit', 'Diff.'].map((label, index) => <th key={`${label}-${index}`}>{label}</th>)}</tr></thead><tbody>{forecastRows.map((row, rowIndex) => <tr key={row[0]}>{row.map((value, index) => index === 0 ? <th key={index} scope="row" className={rowIndex ? 'bcmi-child-bu' : ''}>{value}</th> : <ForecastCell key={index} value={value} index={index} />)}</tr>)}</tbody></table></section><hr className="bcmi-rule" /><h2 className="bcmi-section-heading">Q4 RA Coverage Deals</h2><section className="bcmi-q4-layout"><div className="bcmi-q4-main"><h3>Converted so far:</h3><DealTable rows={convertedDeals} converted /><div className="bcmi-q4-total"><span>Total</span><strong>$0.96 M</strong></div><h3>In the works:</h3><div className="bcmi-q4-scroll"><DealTable rows={inProgressDeals} /></div></div><aside className="bcmi-q4-side"><SideTable title="Large Deals" headers={['S.No.', 'Account', 'Description', 'Total TCV', '2026-TCV']} rows={largeDeals} /><SideTable title="Wins" headers={['S.No.', 'Account', 'Description', 'Total TCV', '2026-TCV', 'Tentative Start']} rows={wins} total="$0.4 M" /></aside></section></main></>;
 }
