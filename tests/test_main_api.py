@@ -173,6 +173,51 @@ def test_health_and_swagger_include_all_api_routes():
             assert operation["tags"]
 
 
+def test_frontier_security_defense_upload_and_current(monkeypatch):
+    parsed = {
+        "sheetName": "Opportunity Input",
+        "headers": ["BU *", "Account Name *", "Opportunity Name *"],
+        "rows": [["BCMI", "JPMC", "Security Remediation"]],
+        "rowsSaved": 1,
+    }
+    metadata = {
+        "available": True,
+        "table": "frontier_security_defense_upload",
+        "rowsSaved": 1,
+        "sourceFilename": "frontier.xlsx",
+    }
+    monkeypatch.setattr(main, "parse_frontier_security_defense_workbook", lambda *_args: parsed)
+    monkeypatch.setattr(main, "replace_frontier_security_defense_upload", lambda *_args: metadata)
+    monkeypatch.setattr(main, "load_frontier_security_defense_upload", lambda: {**metadata, **parsed})
+
+    upload = client.post("/api/reports/frontier-security-defense/upload", files=upload_file())
+    assert upload.status_code == 200
+    assert upload.json()["database"]["table"] == "frontier_security_defense_upload"
+    assert upload.json()["rowsSaved"] == 1
+
+    current = client.get("/api/reports/frontier-security-defense/current")
+    assert current.status_code == 200
+    assert current.json()["rows"][0][1] == "JPMC"
+
+
+def test_frontier_security_defense_storage_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "dashboard.db")
+    payload = {
+        "sheetName": "Opportunity Input",
+        "headers": ["BU *", "Account Name *"],
+        "rows": [["BCMI", "JPMC"]],
+        "rowsSaved": 1,
+    }
+
+    metadata = database.replace_frontier_security_defense_upload("frontier.xlsx", payload)
+    saved = database.load_frontier_security_defense_upload()
+
+    assert metadata["table"] == "frontier_security_defense_upload"
+    assert saved["available"] is True
+    assert saved["sourceFilename"] == "frontier.xlsx"
+    assert saved["rows"] == payload["rows"]
+
+
 def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):
     monkeypatch.setattr(main, "load_revenue_forecast_metadata", lambda: meta(True, "revenue_forecast", 10))
     monkeypatch.setattr(main, "load_insurance_revenue_forecast_metadata", lambda: meta(False, "insurance_revenue_forecast", 0))

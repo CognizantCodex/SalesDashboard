@@ -158,5 +158,6 @@ npm run api:node
 The Node server listens on `http://127.0.0.1:3002`. To direct the frontend to
 it, start Vite with `VITE_API_BASE_URL=http://127.0.0.1:3002`.
 
-Core revenue, pipeline, SLS, SLSM, SLSL, metadata, and SLS breakdown APIs are
-available with the same route names as the Python service.
+Core revenue, pipeline, SLS, SLSM, SLSL, metadata, SLS breakdown, RA, and
+Frontier Security & Defense opportunity upload APIs are available with the same
+route names as the Python service.

@@ -9,6 +9,10 @@ export default function ReportGeneration() {
   const [raSourceFilename, setRaSourceFilename] = useState('');
   const [raRowsSaved, setRaRowsSaved] = useState(0);
   const [isUploadingRa, setIsUploadingRa] = useState(false);
+  const [frontierAvailable, setFrontierAvailable] = useState(false);
+  const [frontierSourceFilename, setFrontierSourceFilename] = useState('');
+  const [frontierRowsSaved, setFrontierRowsSaved] = useState(0);
+  const [isUploadingFrontier, setIsUploadingFrontier] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingStatus, setIsLoadingStatus] = useState(true);
   const [error, setError] = useState('');
@@ -16,13 +20,17 @@ export default function ReportGeneration() {
   useEffect(() => {
     Promise.all([
       fetch(apiUrl('/api/demand-creation/current')).then((response) => response.ok ? response.json() : null),
-      fetch(apiUrl('/api/reports/ra/current')).then((response) => response.ok ? response.json() : null)
-    ]).then(([demand, ra]) => {
+      fetch(apiUrl('/api/reports/ra/current')).then((response) => response.ok ? response.json() : null),
+      fetch(apiUrl('/api/reports/frontier-security-defense/current')).then((response) => response.ok ? response.json() : null)
+    ]).then(([demand, ra, frontier]) => {
       setAvailable(Boolean(demand?.available));
       setSourceFilename(demand?.sourceFilename || '');
       setRaAvailable(Boolean(ra?.available));
       setRaSourceFilename(ra?.sourceFilename || '');
       setRaRowsSaved(ra?.rowsSaved || 0);
+      setFrontierAvailable(Boolean(frontier?.available));
+      setFrontierSourceFilename(frontier?.sourceFilename || '');
+      setFrontierRowsSaved(frontier?.rowsSaved || 0);
     }).catch(() => setAvailable(false)).finally(() => setIsLoadingStatus(false));
   }, []);
 
@@ -44,6 +52,28 @@ export default function ReportGeneration() {
       setError(uploadError.message);
     } finally {
       setIsUploadingRa(false);
+      event.target.value = '';
+    }
+  }
+
+  async function uploadFrontierWorkbook(event) {
+    const workbook = event.target.files?.[0];
+    if (!workbook) return;
+    setError('');
+    setIsUploadingFrontier(true);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', workbook);
+      const response = await fetch(apiUrl('/api/reports/frontier-security-defense/upload'), { method: 'POST', body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Unable to upload the Frontier Security & Defense workbook.');
+      setFrontierAvailable(Boolean(payload.available));
+      setFrontierSourceFilename(payload.sourceFilename || workbook.name);
+      setFrontierRowsSaved(payload.database?.rowsSaved || 0);
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setIsUploadingFrontier(false);
       event.target.value = '';
     }
   }
@@ -97,6 +127,10 @@ export default function ReportGeneration() {
         <section className="report-action-card report-ra-upload-card">
           <div><h2>RA Path to Recovery</h2><p>{raAvailable ? `${raSourceFilename || 'RA workbook'} saved with ${raRowsSaved.toLocaleString()} rows from Q3 BU RA - Americas and Q4 RA - Americas.` : 'Upload an RA workbook to save the Q3 and Q4 Americas RA sheets.'}</p></div>
           <label className="report-download-button report-upload-button">{isUploadingRa ? 'Uploading RA…' : 'Upload RA File'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadRaWorkbook} disabled={isUploadingRa} /></label>
+        </section>
+        <section className="report-action-card report-ra-upload-card">
+          <div><h2>Frontier Security &amp; Defense Opportunities</h2><p>{frontierAvailable ? `${frontierSourceFilename || 'Opportunity workbook'} saved with ${frontierRowsSaved.toLocaleString()} opportunity rows.` : 'Upload the Opportunity Input sheet to save Frontier Security & Defense opportunities.'}</p></div>
+          <label className="report-download-button report-upload-button">{isUploadingFrontier ? 'Uploading opportunities…' : 'Upload Opportunities'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadFrontierWorkbook} disabled={isUploadingFrontier} /></label>
         </section>
         {error && <p className="report-error" role="alert">{error}</p>}
         </>}

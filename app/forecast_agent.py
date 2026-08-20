@@ -34,6 +34,15 @@ TARGETS_SHEET = "SLM-SLS-Pivot"
 TARGET_TOTAL_LABEL = "Grand Total"
 DEMAND_CREATION_SHEETS = {"BCM": "BCM", "INS2": "INS2"}
 RA_WORKBOOK_SHEETS = ("Q3 BU RA - Americas", "Q4 RA - Americas")
+FRONTIER_SECURITY_DEFENSE_SHEET = "Opportunity Input"
+FRONTIER_SECURITY_DEFENSE_REQUIRED_COLUMNS = (
+    "BU *",
+    "Account Name *",
+    "Winzone ID *",
+    "Opportunity Name *",
+    "Frontier Model *",
+    "SEG TCV Value (USD) *",
+)
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -1165,6 +1174,30 @@ def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
         sheets.append({"sheetName": sheet_name, "headers": headers, "rows": rows, "rowsSaved": len(rows)})
 
     return {"sheets": sheets, "rowsSaved": sum(sheet["rowsSaved"] for sheet in sheets)}
+
+
+def parse_frontier_security_defense_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
+    """Extract opportunity rows from the Frontier Security & Defense input sheet."""
+    values = _read_sheet(file_bytes, filename, FRONTIER_SECURITY_DEFENSE_SHEET)
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(values)
+            if all(column in {str(cell or "").strip() for cell in row} for column in FRONTIER_SECURITY_DEFENSE_REQUIRED_COLUMNS)
+        ),
+        None,
+    )
+    if header_index is None:
+        raise ValueError("Missing the required opportunity columns in the Opportunity Input sheet.")
+
+    headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(values[header_index])]
+    bu_index = headers.index("BU *")
+    rows = [
+        [_ra_serializable_cell(_cell(row, index)) for index in range(len(headers))]
+        for row in values[header_index + 1 :]
+        if str(_cell(row, bu_index) or "").strip()
+    ]
+    return {"sheetName": FRONTIER_SECURITY_DEFENSE_SHEET, "headers": headers, "rows": rows, "rowsSaved": len(rows)}
 
 
 def _ra_serializable_cell(value: Any) -> Any:

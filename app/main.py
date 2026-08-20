@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from .database import (
     load_demand_creation_upload,
+    load_frontier_security_defense_upload,
     load_ra_upload,
     load_insurance_revenue_forecast_metadata,
     load_pending_validation_metadata,
@@ -39,6 +40,7 @@ from .database import (
     load_wins_lost_metadata,
     replace_pending_validation,
     replace_demand_creation_upload,
+    replace_frontier_security_defense_upload,
     replace_ra_upload,
     replace_pipeline_upload,
     replace_insurance_pipeline_upload,
@@ -51,7 +53,7 @@ from .database import (
     replace_target_upload,
     replace_wins_lost,
 )
-from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_ra_workbook, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_frontier_security_defense_workbook, parse_ra_workbook, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
 
 
 OPENAPI_TAGS = [
@@ -950,6 +952,22 @@ async def upload_ra_workbook(workbook: UploadFile = File(...)) -> dict:
 @app.get("/api/reports/ra/current", tags=["Reports"])
 async def current_ra_workbook() -> dict:
     return await asyncio.to_thread(load_ra_upload)
+
+
+@app.post("/api/reports/frontier-security-defense/upload", tags=["Reports"])
+async def upload_frontier_security_defense_workbook(workbook: UploadFile = File(...)) -> dict:
+    try:
+        source_filename = workbook.filename or ""
+        parsed = await asyncio.to_thread(parse_frontier_security_defense_workbook, await workbook.read(), source_filename)
+        metadata = await asyncio.to_thread(replace_frontier_security_defense_upload, source_filename, parsed)
+        return {"available": metadata["available"], "sourceFilename": source_filename, "database": metadata, **parsed}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/frontier-security-defense/current", tags=["Reports"])
+async def current_frontier_security_defense_workbook() -> dict:
+    return await asyncio.to_thread(load_frontier_security_defense_upload)
 
 
 @app.get("/api/bcmi-orig/ra-summary", tags=["Reports"])

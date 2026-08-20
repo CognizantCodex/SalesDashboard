@@ -54,6 +54,20 @@ function parseRaWorkbook(file) {
   });
   return { headers, rows };
 }
+function parseFrontierSecurityDefenseWorkbook(file) {
+  if (!file?.buffer) throw new Error('A Frontier Security & Defense workbook is required.');
+  const workbook = XLSX.read(file.buffer, { type: 'buffer', cellDates: true });
+  const sheetName = 'Opportunity Input';
+  if (!workbook.SheetNames.includes(sheetName)) throw new Error(`Sheet "${sheetName}" was not found in workbook.`);
+  const values = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true });
+  const requiredColumns = ['BU *', 'Account Name *', 'Winzone ID *', 'Opportunity Name *', 'Frontier Model *', 'SEG TCV Value (USD) *'];
+  const headerIndex = values.findIndex((row) => Array.isArray(row) && requiredColumns.every((columnName) => row.map((cell) => String(cell ?? '').trim()).includes(columnName)));
+  if (headerIndex < 0) throw new Error('Missing the required opportunity columns in the Opportunity Input sheet.');
+  const headers = values[headerIndex].map((cell, index) => String(cell ?? '').trim() || `Column ${index + 1}`);
+  const businessUnitIndex = headers.indexOf('BU *');
+  const rows = values.slice(headerIndex + 1).filter((row) => String(row[businessUnitIndex] ?? '').trim());
+  return { sheetName, headers, rows };
+}
 
 function save(kind, parsed, filename) {
   db.prepare(`INSERT INTO node_uploads(kind, source_filename, headers_json, rows_json, updated_at)
@@ -198,6 +212,7 @@ uploadRoute('/api/forecast/upload', 'revenue_forecast'); uploadRoute('/api/forec
 uploadRoute('/api/pipeline/upload', 'pipeline_upload'); uploadRoute('/api/pipeline/insurance/upload', 'insurance_pipeline_upload');
 uploadRoute('/api/slsm/forecast/upload', 'revenue_forecast', 'SL_Forecast -2026'); uploadRoute('/api/slsm/pipeline/upload', 'pipeline_upload');
 app.post('/api/reports/ra/upload', upload.single('workbook'), (req, res) => { try { const record = save('ra_upload', parseRaWorkbook(req.file), req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record }); } catch (error) { res.status(400).json({ detail: error.message }); } });
+app.post('/api/reports/frontier-security-defense/upload', upload.single('workbook'), (req, res) => { try { const parsed = parseFrontierSecurityDefenseWorkbook(req.file); const record = save('frontier_security_defense_upload', parsed, req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record, ...parsed }); } catch (error) { res.status(400).json({ detail: error.message }); } });
 
 app.get('/api/forecast/current', (req,res) => res.json(forecastResult(req.query.slsName || '', 'sls')));
 app.get('/api/slsm/forecast/current', (req,res) => res.json(forecastResult(req.query.slsmName || '', 'slsm')));
@@ -205,6 +220,7 @@ app.get('/api/slsm/forecast/options/current', (_,res) => { const data = revenueD
 app.get('/api/pipeline/summary/current', (req,res) => res.json(pipelineResult(req.query.slsName || '', 'sls')));
 app.get('/api/slsm/pipeline/summary/current', (req,res) => res.json(pipelineResult(req.query.slsmName || '', 'slsm')));
 app.get('/api/reports/ra/current', (_, res) => { const record = metadata('ra_upload'); res.json({ available: record.available, sourceFilename: record.sourceFilename, rowsSaved: record.rowsSaved }); });
+app.get('/api/reports/frontier-security-defense/current', (_, res) => { const record = raw('frontier_security_defense_upload'); res.json({ available: record.rows.length > 0, sourceFilename: record.sourceFilename, rowsSaved: record.rows.length, sheetName: 'Opportunity Input', headers: record.headers, rows: record.rows }); });
 for (const [route, dimension, query, type] of [['/api/won-lost/summary/current','sls','slsName','won'],['/api/slsm/won-lost/summary/current','slsm','slsmName','won'],['/api/pending-validation/summary/current','sls','slsName','pending'],['/api/slsm/pending-validation/summary/current','slsm','slsmName','pending']]) app.get(route, (req,res) => { const data = pipelineData(); const metrics = pipelineMetrics(data, req.query[query] || '', dimension, type); res.json({ available: data.rows.length > 0, query: req.query[query] || '', metrics, database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }); });
 app.get('/api/slsl/summary/current', (_, res) => { const rev = revenueData(), pipe = pipelineData(); const names = [...new Set([...uniquePeople(rev,'slsm'), ...uniquePeople(pipe,'slsm')])]; const rows = names.map((slsmName) => { const revenue = revenueMetrics(rev,slsmName,'slsm'), pipeline = pipelineMetrics(pipe,slsmName,'slsm'), won = pipelineMetrics(pipe,slsmName,'slsm','won'), pending = pipelineMetrics(pipe,slsmName,'slsm','pending'); const total = won.won + pending.pendingValidation; return { slsmName, revenue, pipeline, realizedTcv: { total, won: won.won, pendingValidation: pending.pendingValidation, rows: won.rows + pending.rows, labels: { total: money(total), won: won.labels.won, pendingValidation: pending.labels.pendingValidation } } }; }); res.json({ available: rows.length > 0, year: new Date().getFullYear(), rows, database: { revenue: { rowsSaved: rev.rows.length, sourceFilename: rev.sourceFilename }, pipeline: { rowsSaved: pipe.rows.length, sourceFilename: pipe.sourceFilename } } }); });
 app.get('/api/slsm/sls-breakdown/current', (req,res) => { const name = req.query.slsmName || ''; if (!name) return res.status(400).json({ detail: 'SLSM name is required.' }); const rev = revenueData(), pipe = pipelineData(); const names = [...new Set([...personRows(rev,name,'slsm').map((row)=>String(value(row,column(rev.headers,aliases.sls))||'').trim()), ...personRows(pipe,name,'slsm').map((row)=>String(value(row,column(pipe.headers,aliases.sls))||'').trim())])].filter(Boolean); const rows = names.map((slsName) => { const revenue=revenueMetrics(rev,slsName,'sls'), pipeline=pipelineMetrics(pipe,slsName,'sls'), won=pipelineMetrics(pipe,slsName,'sls','won'), pending=pipelineMetrics(pipe,slsName,'sls','pending'); const total=won.won+pending.pendingValidation; return {slsName,revenue,pipeline,realizedTcv:{total,won:won.won,pendingValidation:pending.pendingValidation,rows:won.rows+pending.rows,labels:{total:money(total),won:won.labels.won,pendingValidation:pending.labels.pendingValidation}}}; }).filter((row)=>[row.revenue.forecast,row.revenue.target,row.revenue.gap,row.pipeline.pipeline,row.pipeline.qualified,row.pipeline.unqualified,row.realizedTcv.total].some(Boolean)); res.json({available:rows.length>0,query:name,year:new Date().getFullYear(),rows}); });
