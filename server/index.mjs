@@ -120,11 +120,21 @@ function pipelineMetrics(data, name, dimension = 'sls', type = 'pipeline') {
 }
 function pipelineResult(name, dimension = 'sls') { const data = pipelineData(); const metrics = pipelineMetrics(data, name, dimension); return { available: data.rows.length > 0, query: name, year: new Date().getFullYear(), matchedSlsNames: uniquePeople(data, dimension).filter((item) => key(item) === key(name)), metrics, accounts: [], rows: [], database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }; }
 function forecastResult(name, dimension = 'sls') { const data = revenueData(); const metrics = revenueMetrics(data, name, dimension); return { available: data.rows.length > 0, query: name, matchedSlsNames: uniquePeople(data, dimension).filter((item) => key(item) === key(name)), metrics, accounts: [], rows: [], database: { table: 'revenue_forecast', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }; }
+function recentPipelineRows(parsed) { const marker = column(parsed.headers, ['opportunity created in two weeks or old']); return marker < 0 ? parsed.rows : parsed.rows.filter((row) => key(value(row, marker)) === 'opportunity created in two weeks'); }
+function latestPipelineWeekRows(data) { const created = column(data.headers, ['created date']); if (created < 0) return data.rows; const dates = data.rows.map((row) => { const raw = value(row, created); const numeric = Number(raw); if (Number.isFinite(numeric)) return new Date(Date.UTC(1899, 11, 30 + numeric)); const parsed = new Date(String(raw || '')); return Number.isNaN(parsed.valueOf()) ? null : parsed; }); const latest = dates.filter(Boolean).reduce((maximum, date) => !maximum || date > maximum ? date : maximum, null); if (!latest) return data.rows; const cutoff = new Date(latest); cutoff.setUTCDate(cutoff.getUTCDate() - 6); return data.rows.filter((_, index) => dates[index] && dates[index] >= cutoff); }
+function campaignName(row, index) { const raw = value(row, index); const name = raw === null || raw === undefined ? '' : String(raw).trim(); return ['none', 'n/a', 'na', '-'].includes(key(name)) ? '' : name; }
+function refreshQualityPipelineData() { [['pipeline_upload', 'quality_pipeline_bcm_upload'], ['insurance_pipeline_upload', 'quality_pipeline_insurance_upload']].forEach(([source, target]) => { const data = raw(source); if (data.rows.length) save(target, { headers: data.headers, rows: recentPipelineRows(data) }, data.sourceFilename); }); }
 function qualityPipelineSummary() {
-  const data = pipelineData();
-  if (!data.rows.length) return { available: false, rows: [], database: { table: 'pipeline_upload', rowsSaved: 0 } };
+  refreshQualityPipelineData();
+  const data = merge('quality_pipeline_bcm_upload', 'quality_pipeline_insurance_upload');
+  if (!data.rows.length) return { available: false, rows: [], offerings: [], campaigns: [], opportunities: [], campaignOpportunities: [], database: { table: 'quality_pipeline_bcm_upload + quality_pipeline_insurance_upload', rowsSaved: 0 } };
   const stageIndex = column(data.headers, ['grouped sales stage']);
   const subStatusIndex = column(data.headers, ['sub-status']);
+  const offeringIndex = column(data.headers, ['offering/solutions']);
+  const campaignIndex = column(data.headers, ['campaign theme']);
+  const accountIndex = column(data.headers, ['financial ultimate parent account', 'account name']);
+  const opportunityIndex = column(data.headers, ['opportunity name']);
+  const opportunityIdIndex = column(data.headers, ['winzone opportunity id']);
   const periods = {
     q3: column(data.headers, ['cy q3 $']),
     q4: column(data.headers, ['cy q4 $']),
@@ -133,13 +143,22 @@ function qualityPipelineSummary() {
     total: column(data.headers, ['net tcv share (converted)', 'net tcv share'])
   };
   const totals = Object.fromEntries(['Qualified', 'Unqualified'].map((label) => [label, Object.fromEntries(Object.keys(periods).map((period) => [period, 0]))]));
+  const offeringTotals = new Map(); const campaignTotals = new Map(); const candidateRows = [];
   data.rows.forEach((row) => {
     const stage = String(value(row, stageIndex) || '').trim();
     const label = stage === 'Qualified' ? 'Qualified' : stage === 'Un-Qualified' ? 'Unqualified' : null;
     if (!label || key(value(row, subStatusIndex)) === 'negotiation') return;
     Object.entries(periods).forEach(([period, index]) => { totals[label][period] += number(value(row, index)); });
   });
-  return { available: true, rows: Object.entries(totals).map(([label, values]) => ({ label, ...values })), database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } };
+  latestPipelineWeekRows(data).forEach((row) => {
+    const stage = String(value(row, stageIndex) || '').trim();
+    if (!['Qualified', 'Un-Qualified'].includes(stage) || key(value(row, subStatusIndex)) === 'negotiation') return;
+    const offering = String(value(row, offeringIndex) || '').trim() || 'Unspecified'; const total = number(value(row, periods.total)); offeringTotals.set(offering, (offeringTotals.get(offering) || 0) + total); const campaign = campaignName(row, campaignIndex); if (campaign) campaignTotals.set(campaign, (campaignTotals.get(campaign) || 0) + total); candidateRows.push(row);
+  });
+  const topCategories = (totalsByCategory) => { const categories = [...totalsByCategory.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3); const total = categories.reduce((sum, [, value]) => sum + value, 0); return categories.map(([name, totalTcv]) => ({ name, totalTcv, percent: total ? totalTcv / total * 100 : 0 })); };
+  const topOfferings = topCategories(offeringTotals); const topCampaigns = topCategories(campaignTotals); const selectedOfferings = new Set(topOfferings.map(({ name }) => name)); const selectedCampaigns = new Set(topCampaigns.map(({ name }) => name)); const opportunities = new Map(); const campaignOpportunities = new Map();
+  candidateRows.forEach((row) => { const offering = String(value(row, offeringIndex) || '').trim() || 'Unspecified'; const campaign = campaignName(row, campaignIndex); const account = String(value(row, accountIndex) || '').trim(); const description = String(value(row, opportunityIndex) || '').trim(); const id = String(value(row, opportunityIdIndex) || '').trim() || `${account}|${description}`; const totalTcv = number(value(row, periods.total)); const yearTcv = number(value(row, periods.year)); if (selectedOfferings.has(offering)) { const item = opportunities.get(id) || { account, description, offering, totalTcv: 0, yearTcv: 0 }; item.totalTcv += totalTcv; item.yearTcv += yearTcv; opportunities.set(id, item); } if (selectedCampaigns.has(campaign)) { const item = campaignOpportunities.get(id) || { account, description, campaign, totalTcv: 0, yearTcv: 0 }; item.totalTcv += totalTcv; item.yearTcv += yearTcv; campaignOpportunities.set(id, item); } });
+  return { available: true, rows: Object.entries(totals).map(([label, values]) => ({ label, ...values })), offerings: topOfferings, campaigns: topCampaigns, opportunities: [...opportunities.values()].sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 6), campaignOpportunities: [...campaignOpportunities.values()].sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 6), database: { table: 'quality_pipeline_bcm_upload + quality_pipeline_insurance_upload', rowsSaved: data.rows.length, displayRows: latestPipelineWeekRows(data).length, sourceFilename: data.sourceFilename } };
 }
 function bcmiOrigRevenueSummary() {
   const data = revenueData();
@@ -208,8 +227,9 @@ app.get('/api/slsm/forecast/current/metadata', (_, res) => res.json(mergedMetada
 app.get('/api/slsm/pipeline/upload/metadata', (_, res) => res.json(mergedMetadata('pipeline_upload', 'insurance_pipeline_upload')));
 
 function uploadRoute(pathname, kind, sheet = 'Data') { app.post(pathname, upload.single('workbook'), (req, res) => { try { const record = save(kind, parseWorkbook(req.file, req.body.sheetName || sheet), req.file.originalname); res.json({ available: record.available, database: record }); } catch (error) { res.status(400).json({ detail: error.message }); } }); }
+function pipelineUploadRoute(pathname, kind, qualityKind) { app.post(pathname, upload.single('workbook'), (req, res) => { try { const parsed = parseWorkbook(req.file, req.body.sheetName || 'Data'); const record = save(kind, parsed, req.file.originalname); const qualityRecord = save(qualityKind, { headers: parsed.headers, rows: recentPipelineRows(parsed) }, req.file.originalname); res.json({ available: record.available, database: { ...record, qualityPipelineRowsSaved: qualityRecord.rowsSaved } }); } catch (error) { res.status(400).json({ detail: error.message }); } }); }
 uploadRoute('/api/forecast/upload', 'revenue_forecast'); uploadRoute('/api/forecast/insurance/upload', 'insurance_revenue_forecast');
-uploadRoute('/api/pipeline/upload', 'pipeline_upload'); uploadRoute('/api/pipeline/insurance/upload', 'insurance_pipeline_upload');
+pipelineUploadRoute('/api/pipeline/upload', 'pipeline_upload', 'quality_pipeline_bcm_upload'); pipelineUploadRoute('/api/pipeline/insurance/upload', 'insurance_pipeline_upload', 'quality_pipeline_insurance_upload');
 uploadRoute('/api/slsm/forecast/upload', 'revenue_forecast', 'SL_Forecast -2026'); uploadRoute('/api/slsm/pipeline/upload', 'pipeline_upload');
 app.post('/api/reports/ra/upload', upload.single('workbook'), (req, res) => { try { const record = save('ra_upload', parseRaWorkbook(req.file), req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record }); } catch (error) { res.status(400).json({ detail: error.message }); } });
 app.post('/api/reports/frontier-security-defense/upload', upload.single('workbook'), (req, res) => { try { const parsed = parseFrontierSecurityDefenseWorkbook(req.file); const record = save('frontier_security_defense_upload', parsed, req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record, ...parsed }); } catch (error) { res.status(400).json({ detail: error.message }); } });

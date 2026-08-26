@@ -218,6 +218,31 @@ def test_frontier_security_defense_storage_round_trip(tmp_path, monkeypatch):
     assert saved["rows"] == payload["rows"]
 
 
+def test_quality_pipeline_uses_two_week_rows_and_combines_top_opportunities():
+    headers = [
+        "Opportunity Created in Two weeks or Old", "Grouped Sales Stage", "Sub-Status", "Offering/Solutions",
+        "Financial Ultimate Parent Account", "Opportunity Name", "WinZone Opportunity ID", "Campaign Theme", "CY Q3 $", "CY Q4 $",
+        "CY $", "NY $", "Net TCV Share (converted)",
+    ]
+    rows = [
+        ["Opportunity Created in Two Weeks", "Qualified", "", "Modernize", "Account A", "Opportunity A", "1", "Campaign A", 10, 20, 30, 40, 100],
+        ["Opportunity Created in Two Weeks", "Qualified", "", "Optimize", "Account B", "Opportunity B", "2", "Campaign B", 20, 30, 50, 60, 90],
+        ["Opportunity Created in Two Weeks", "Un-Qualified", "", "Assure", "Account C", "Opportunity C", "3", "Campaign A", 5, 10, 15, 20, 80],
+        ["Opportunity Created in Two Weeks", "Qualified", "", "Modernize", "Account D", "Opportunity D", "4", "Campaign C", 2, 3, 5, 6, 70],
+        ["Old Opportunity", "Qualified", "", "Excluded", "Account E", "Opportunity E", "5", "Campaign D", 99, 99, 99, 99, 999],
+    ]
+
+    recent = main._recent_pipeline_rows(headers, rows)
+    payload = main._quality_pipeline_payload(headers, recent, "pipeline.xlsx")
+
+    assert len(recent) == 4
+    assert [offering["name"] for offering in payload["offerings"]] == ["Modernize", "Optimize", "Assure"]
+    assert [opportunity["description"] for opportunity in payload["opportunities"]] == ["Opportunity A", "Opportunity B", "Opportunity C", "Opportunity D"]
+    assert [campaign["name"] for campaign in payload["campaigns"]] == ["Campaign A", "Campaign B", "Campaign C"]
+    assert [opportunity["description"] for opportunity in payload["campaignOpportunities"]] == ["Opportunity A", "Opportunity B", "Opportunity C", "Opportunity D"]
+    assert payload["rows"][0]["total"] == 260
+
+
 def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):
     monkeypatch.setattr(main, "load_revenue_forecast_metadata", lambda: meta(True, "revenue_forecast", 10))
     monkeypatch.setattr(main, "load_insurance_revenue_forecast_metadata", lambda: meta(False, "insurance_revenue_forecast", 0))

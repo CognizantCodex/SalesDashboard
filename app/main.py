@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,11 +19,13 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from .database import (
     load_demand_creation_upload,
     load_frontier_security_defense_upload,
+    load_quality_pipeline_upload,
     load_ra_upload,
     load_insurance_revenue_forecast_metadata,
     load_pending_validation_metadata,
     load_insurance_pipeline_upload_metadata,
     load_pipeline_upload,
+    load_pipeline_upload_source,
     load_pipeline_upload_metadata,
     load_revenue_forecast,
     load_revenue_forecast_metadata,
@@ -44,6 +47,7 @@ from .database import (
     replace_ra_upload,
     replace_pipeline_upload,
     replace_insurance_pipeline_upload,
+    replace_quality_pipeline_upload,
     replace_insurance_revenue_forecast,
     replace_revenue_forecast,
     replace_slsm_pending_validation,
@@ -89,6 +93,7 @@ app.add_middleware(
 
 
 REPORT_EXPORT_DIR = Path(tempfile.gettempdir()) / "sales-dashboard-reports"
+RECENT_PIPELINE_MARKER = "opportunity created in two weeks"
 
 
 def _presentation_node() -> str:
@@ -98,6 +103,156 @@ def _presentation_node() -> str:
         if candidate and Path(candidate).exists():
             return candidate
     raise RuntimeError("Node.js is required to create the PowerPoint report.")
+
+
+def _recent_pipeline_rows(headers: list[str], rows: list[list]) -> list[list]:
+    """Keep the two-week subset flagged by the source pipeline Data sheet."""
+    marker_index = _get_column({header: index for index, header in enumerate(headers) if header}, "Opportunity Created in Two weeks or Old")
+    if marker_index is None:
+        return rows
+    return [
+        row
+        for row in rows
+        if str(row[marker_index] if marker_index < len(row) else "").strip().casefold() == RECENT_PIPELINE_MARKER
+    ]
+
+
+def _pipeline_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date(1899, 12, 30) + timedelta(days=float(value))
+    except (TypeError, ValueError):
+        try:
+            return datetime.fromisoformat(str(value)).date()
+        except ValueError:
+            return None
+
+
+def _latest_pipeline_week_rows(headers: list[str], rows: list[list]) -> list[list]:
+    created_index = _get_column({header: index for index, header in enumerate(headers) if header}, "Created Date")
+    if created_index is None:
+        return rows
+    dates = [_pipeline_date(row[created_index] if created_index < len(row) else None) for row in rows]
+    latest_date = max((value for value in dates if value is not None), default=None)
+    if latest_date is None:
+        return rows
+    cutoff = latest_date - timedelta(days=6)
+    return [row for row, value in zip(rows, dates) if value is not None and value >= cutoff]
+
+
+def _refresh_quality_pipeline_uploads() -> None:
+    """Rebuild saved Quality Pipeline subsets without replacing full history."""
+    for insurance in (False, True):
+        headers, rows, source_filename = load_pipeline_upload_source(insurance)
+        if rows:
+            replace_quality_pipeline_upload(headers, _recent_pipeline_rows(headers, rows), source_filename or "", insurance)
+
+
+def _quality_pipeline_payload(headers: list[str], rows: list[list], source_filename: str | None) -> dict:
+    if not rows:
+        return {"available": False, "rows": [], "offerings": [], "campaigns": [], "opportunities": [], "campaignOpportunities": [], "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": 0}}
+
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    stage_column = _get_column(col_map, "Grouped Sales Stage")
+    sub_status_column = _get_column(col_map, "Sub-Status")
+    offering_column = _get_column(col_map, "Offering/Solutions")
+    account_column = _get_column(col_map, "Financial Ultimate Parent Account", "Account Name")
+    opportunity_column = _get_column(col_map, "Opportunity Name")
+    opportunity_id_column = _get_column(col_map, "WinZone Opportunity ID")
+    campaign_column = _get_column(col_map, "Campaign Theme")
+
+    def campaign_name(row: list) -> str:
+        value = row[campaign_column] if campaign_column is not None and campaign_column < len(row) else None
+        name = str(value).strip() if value is not None else ""
+        return "" if name.casefold() in {"none", "n/a", "na", "-"} else name
+
+    period_columns = {
+        "q3": _get_column(col_map, "CY Q3 $"),
+        "q4": _get_column(col_map, "CY Q4 $"),
+        "year": _get_column(col_map, "CY $", "Current Year Revenue (converted)"),
+        "yearPlus": _get_column(col_map, "NY $"),
+        "total": _get_column(col_map, "Net TCV Share (converted)", "Net TCV Share"),
+    }
+    if stage_column is None or offering_column is None or any(index is None for index in period_columns.values()):
+        missing = [name for name, index in period_columns.items() if index is None]
+        if stage_column is None:
+            missing.append("Grouped Sales Stage")
+        if offering_column is None:
+            missing.append("Offering/Solutions")
+        raise ValueError(f"Missing columns: {', '.join(missing)}")
+
+    totals = {"Qualified": {period: 0.0 for period in period_columns}, "Unqualified": {period: 0.0 for period in period_columns}}
+    display_rows = _latest_pipeline_week_rows(headers, rows)
+    offering_totals: dict[str, float] = {}
+    campaign_totals: dict[str, float] = {}
+    candidates: list[list] = []
+    for row in rows:
+        stage = str(row[stage_column] if stage_column < len(row) else "").strip()
+        label = "Qualified" if stage == "Qualified" else "Unqualified" if stage == "Un-Qualified" else None
+        if not label:
+            continue
+        sub_status = str(row[sub_status_column] if sub_status_column is not None and sub_status_column < len(row) else "").strip().casefold()
+        if sub_status == "negotiation":
+            continue
+        for period, index in period_columns.items():
+            totals[label][period] += _to_number(row[index] if index is not None and index < len(row) else 0)
+    for row in display_rows:
+        stage = str(row[stage_column] if stage_column < len(row) else "").strip()
+        if stage not in {"Qualified", "Un-Qualified"}:
+            continue
+        sub_status = str(row[sub_status_column] if sub_status_column is not None and sub_status_column < len(row) else "").strip().casefold()
+        if sub_status == "negotiation":
+            continue
+        total_tcv = _to_number(row[period_columns["total"]] if period_columns["total"] is not None and period_columns["total"] < len(row) else 0)
+        offering = str(row[offering_column] if offering_column < len(row) else "").strip() or "Unspecified"
+        offering_totals[offering] = offering_totals.get(offering, 0.0) + total_tcv
+        campaign = campaign_name(row)
+        if campaign:
+            campaign_totals[campaign] = campaign_totals.get(campaign, 0.0) + total_tcv
+        candidates.append(row)
+
+    def top_categories(totals_by_category: dict[str, float]) -> list[dict]:
+        categories = sorted(totals_by_category.items(), key=lambda item: item[1], reverse=True)[:3]
+        category_total = sum(value for _name, value in categories)
+        return [{"name": name, "totalTcv": value, "percent": value / category_total * 100 if category_total else 0} for name, value in categories]
+
+    top_offerings = top_categories(offering_totals)
+    top_campaigns = top_categories(campaign_totals)
+    selected_offerings = {item["name"] for item in top_offerings}
+    selected_campaigns = {item["name"] for item in top_campaigns}
+    opportunities: dict[str, dict] = {}
+    campaign_opportunities: dict[str, dict] = {}
+    for row in candidates:
+        offering = str(row[offering_column] if offering_column < len(row) else "").strip() or "Unspecified"
+        identifier = str(row[opportunity_id_column] if opportunity_id_column is not None and opportunity_id_column < len(row) else "").strip()
+        account = str(row[account_column] if account_column is not None and account_column < len(row) else "").strip()
+        description = str(row[opportunity_column] if opportunity_column is not None and opportunity_column < len(row) else "").strip()
+        key = identifier or f"{account}|{description}"
+        total_tcv = _to_number(row[period_columns["total"]] if period_columns["total"] is not None and period_columns["total"] < len(row) else 0)
+        year_tcv = _to_number(row[period_columns["year"]] if period_columns["year"] is not None and period_columns["year"] < len(row) else 0)
+        if offering in selected_offerings:
+            item = opportunities.setdefault(key, {"account": account, "description": description, "offering": offering, "totalTcv": 0.0, "yearTcv": 0.0})
+            item["totalTcv"] += total_tcv
+            item["yearTcv"] += year_tcv
+
+        campaign = campaign_name(row)
+        if campaign in selected_campaigns:
+            campaign_item = campaign_opportunities.setdefault(key, {"account": account, "description": description, "campaign": campaign, "totalTcv": 0.0, "yearTcv": 0.0})
+            campaign_item["totalTcv"] += total_tcv
+            campaign_item["yearTcv"] += year_tcv
+
+    return {
+        "available": True,
+        "rows": [{"label": label, **values} for label, values in totals.items()],
+        "offerings": top_offerings,
+        "campaigns": top_campaigns,
+        "opportunities": sorted(opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
+        "campaignOpportunities": sorted(campaign_opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
+        "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": len(rows), "displayRows": len(display_rows), "sourceFilename": source_filename},
+    }
 
 
 def _create_report_presentation(demand: dict) -> Path:
@@ -425,47 +580,13 @@ async def pipeline_upload_metadata() -> dict:
 
 @app.get("/api/quality-pipeline/summary")
 async def quality_pipeline_summary() -> dict:
-    """Return the saved BCM and Insurance qualified-pipeline profile."""
-    headers, rows, source_filename = await asyncio.to_thread(load_pipeline_upload)
-    if not rows:
-        return {"available": False, "rows": [], "database": {"table": "pipeline_upload", "rowsSaved": 0}}
-
-    col_map = {header: index for index, header in enumerate(headers) if header}
-    stage_column = _get_column(col_map, "Grouped Sales Stage")
-    sub_status_column = _get_column(col_map, "Sub-Status")
-    period_columns = {
-        "q3": _get_column(col_map, "CY Q3 $"),
-        "q4": _get_column(col_map, "CY Q4 $"),
-        "year": _get_column(col_map, "CY $", "Current Year Revenue (converted)"),
-        "yearPlus": _get_column(col_map, "NY $"),
-        "total": _get_column(col_map, "Net TCV Share (converted)", "Net TCV Share"),
-    }
-    if stage_column is None or any(index is None for index in period_columns.values()):
-        missing = [name for name, index in period_columns.items() if index is None]
-        if stage_column is None:
-            missing.append("Grouped Sales Stage")
-        raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
-
-    totals = {
-        "Qualified": {period: 0.0 for period in period_columns},
-        "Unqualified": {period: 0.0 for period in period_columns},
-    }
-    for row in rows:
-        stage = str(row[stage_column] if stage_column < len(row) else "").strip()
-        label = "Qualified" if stage == "Qualified" else "Unqualified" if stage == "Un-Qualified" else None
-        if not label:
-            continue
-        sub_status = str(row[sub_status_column] if sub_status_column is not None and sub_status_column < len(row) else "").strip().lower()
-        if sub_status == "negotiation":
-            continue
-        for period, index in period_columns.items():
-            totals[label][period] += _to_number(row[index] if index is not None and index < len(row) else 0)
-
-    return {
-        "available": True,
-        "rows": [{"label": label, **values} for label, values in totals.items()],
-        "database": {"table": "pipeline_upload", "rowsSaved": len(rows), "sourceFilename": source_filename},
-    }
+    """Return the saved two-week BCM and Insurance Quality Pipeline profile."""
+    try:
+        await asyncio.to_thread(_refresh_quality_pipeline_uploads)
+        headers, rows, source_filename = await asyncio.to_thread(load_quality_pipeline_upload)
+        return await asyncio.to_thread(_quality_pipeline_payload, headers, rows, source_filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/pipeline/insurance/upload/metadata")
@@ -731,6 +852,7 @@ async def upload_pipeline(
         file_bytes = await workbook.read()
         headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
         rows_saved = await asyncio.to_thread(replace_pipeline_upload, headers, rows, workbook.filename or "")
+        quality_rows_saved = await asyncio.to_thread(replace_quality_pipeline_upload, headers, _recent_pipeline_rows(headers, rows), workbook.filename or "")
         await asyncio.to_thread(replace_slsm_pipeline_upload, headers, rows, workbook.filename or "")
         wins_lost_saved = 0
         try:
@@ -751,6 +873,7 @@ async def upload_pipeline(
             "database": {
                 "table": "pipeline_upload",
                 "rowsSaved": rows_saved,
+                "qualityPipelineRowsSaved": quality_rows_saved,
                 "sourceFilename": workbook.filename or "",
                 "winsLostTable": "wins_lost",
                 "winsLostRowsSaved": wins_lost_saved,
@@ -771,11 +894,13 @@ async def upload_insurance_pipeline(
         file_bytes = await workbook.read()
         headers, rows, _col_map = parse_workbook(file_bytes, workbook.filename or "", sheetName)
         rows_saved = await asyncio.to_thread(replace_insurance_pipeline_upload, headers, rows, workbook.filename or "")
+        quality_rows_saved = await asyncio.to_thread(replace_quality_pipeline_upload, headers, _recent_pipeline_rows(headers, rows), workbook.filename or "", True)
         return {
             "available": rows_saved > 0,
             "database": {
                 "table": "insurance_pipeline_upload",
                 "rowsSaved": rows_saved,
+                "qualityPipelineRowsSaved": quality_rows_saved,
                 "sourceFilename": workbook.filename or "",
             },
         }

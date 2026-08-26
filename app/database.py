@@ -27,6 +27,8 @@ TARGET_ACCOUNT_TABLE = "target_accounts"
 DEMAND_CREATION_TABLE = "demand_creation_upload"
 RA_UPLOAD_TABLE = "ra_upload"
 FRONTIER_SECURITY_DEFENSE_UPLOAD_TABLE = "frontier_security_defense_upload"
+QUALITY_PIPELINE_BCM_TABLE = "quality_pipeline_bcm_upload"
+QUALITY_PIPELINE_INSURANCE_TABLE = "quality_pipeline_insurance_upload"
 
 
 def replace_revenue_forecast(headers: list[str], rows: list[list[Any]], source_filename: str, table_name: str = "revenue_forecast") -> int:
@@ -107,6 +109,16 @@ def replace_insurance_pipeline_upload(headers: list[str], rows: list[list[Any]],
     return replace_pipeline_upload(headers, rows, source_filename, INSURANCE_PIPELINE_UPLOAD_TABLE)
 
 
+def replace_quality_pipeline_upload(
+    headers: list[str],
+    rows: list[list[Any]],
+    source_filename: str,
+    insurance: bool = False,
+) -> int:
+    table_name = QUALITY_PIPELINE_INSURANCE_TABLE if insurance else QUALITY_PIPELINE_BCM_TABLE
+    return replace_pipeline_upload(headers, rows, source_filename, table_name)
+
+
 def load_pipeline_upload_metadata(table_name: str = PIPELINE_UPLOAD_TABLE) -> dict[str, Any]:
     if not DATABASE_PATH.exists():
         return {"available": False, "table": table_name, "rowsSaved": 0, "sourceFilename": None}
@@ -161,9 +173,10 @@ def _load_pipeline_upload_table(table_name: str) -> tuple[list[str], list[list[A
 
 def _merged_pipeline_upload(
     primary_table: str,
+    insurance_table: str = INSURANCE_PIPELINE_UPLOAD_TABLE,
 ) -> tuple[list[str], list[list[Any]], str | None]:
     primary_headers, primary_rows, primary_filename = _load_pipeline_upload_table(primary_table)
-    insurance_headers, insurance_rows, insurance_filename = _load_pipeline_upload_table(INSURANCE_PIPELINE_UPLOAD_TABLE)
+    insurance_headers, insurance_rows, insurance_filename = _load_pipeline_upload_table(insurance_table)
 
     if not insurance_rows:
         return primary_headers, primary_rows, primary_filename
@@ -200,8 +213,17 @@ def load_pipeline_upload(table_name: str = PIPELINE_UPLOAD_TABLE) -> tuple[list[
     return _merged_pipeline_upload(PIPELINE_UPLOAD_TABLE)
 
 
+def load_pipeline_upload_source(insurance: bool = False) -> tuple[list[str], list[list[Any]], str | None]:
+    table_name = INSURANCE_PIPELINE_UPLOAD_TABLE if insurance else PIPELINE_UPLOAD_TABLE
+    return _load_pipeline_upload_table(table_name)
+
+
 def load_slsm_pipeline_upload() -> tuple[list[str], list[list[Any]], str | None]:
     return _merged_pipeline_upload(SLSM_PIPELINE_UPLOAD_TABLE)
+
+
+def load_quality_pipeline_upload() -> tuple[list[str], list[list[Any]], str | None]:
+    return _merged_pipeline_upload(QUALITY_PIPELINE_BCM_TABLE, QUALITY_PIPELINE_INSURANCE_TABLE)
 
 
 def replace_wins_lost(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
