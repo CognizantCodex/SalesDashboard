@@ -27,6 +27,8 @@ TARGET_ACCOUNT_TABLE = "target_accounts"
 DEMAND_CREATION_TABLE = "demand_creation_upload"
 RA_UPLOAD_TABLE = "ra_upload"
 FRONTIER_SECURITY_DEFENSE_UPLOAD_TABLE = "frontier_security_defense_upload"
+WORKABLE_DEMAND_UPLOAD_TABLE = "workable_demand_upload"
+WORKABLE_DEMAND_SO_DETAIL_TABLE = "workable_demand_so_detail_upload"
 QUALITY_PIPELINE_BCM_TABLE = "quality_pipeline_bcm_upload"
 QUALITY_PIPELINE_INSURANCE_TABLE = "quality_pipeline_insurance_upload"
 
@@ -613,6 +615,42 @@ def load_frontier_security_defense_upload() -> dict[str, Any]:
         return {"available": False, "sourceFilename": None, "headers": [], "rows": [], "rowsSaved": 0}
     payload = json.loads(row[2] or "{}")
     return {"available": bool(payload.get("rows")), "sourceFilename": row[0], "rowsSaved": row[1], **payload}
+
+
+def replace_workable_demand_upload(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    """Replace the saved Workable Demand Base-sheet data with the newest upload."""
+    return _replace_single_row_payload(WORKABLE_DEMAND_UPLOAD_TABLE, headers, rows, source_filename)
+
+
+def load_workable_demand_upload() -> dict[str, Any]:
+    headers, rows, source_filename = _load_single_row_payload(WORKABLE_DEMAND_UPLOAD_TABLE)
+    return {
+        "available": bool(rows),
+        "table": WORKABLE_DEMAND_UPLOAD_TABLE,
+        "sourceFilename": source_filename,
+        "rowsSaved": len(rows),
+        "headers": headers,
+        "rows": rows,
+        "sheetName": "Base",
+    }
+
+
+def replace_workable_demand_so_detail_upload(headers: list[str], rows: list[list[Any]], source_filename: str) -> int:
+    """Replace the saved SO Detail by Parent Customer data with the newest upload."""
+    return _replace_single_row_payload(WORKABLE_DEMAND_SO_DETAIL_TABLE, headers, rows, source_filename)
+
+
+def load_workable_demand_so_detail_upload() -> dict[str, Any]:
+    headers, rows, source_filename = _load_single_row_payload(WORKABLE_DEMAND_SO_DETAIL_TABLE)
+    return {
+        "available": bool(rows),
+        "table": WORKABLE_DEMAND_SO_DETAIL_TABLE,
+        "sourceFilename": source_filename,
+        "rowsSaved": len(rows),
+        "headers": headers,
+        "rows": rows,
+        "sheetName": "SO Detail by Parent Customer",
+    }
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:

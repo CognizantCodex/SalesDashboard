@@ -19,6 +19,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from .database import (
     load_demand_creation_upload,
     load_frontier_security_defense_upload,
+    load_workable_demand_upload,
+    load_workable_demand_so_detail_upload,
     load_quality_pipeline_upload,
     load_ra_upload,
     load_insurance_revenue_forecast_metadata,
@@ -44,6 +46,8 @@ from .database import (
     replace_pending_validation,
     replace_demand_creation_upload,
     replace_frontier_security_defense_upload,
+    replace_workable_demand_upload,
+    replace_workable_demand_so_detail_upload,
     replace_ra_upload,
     replace_pipeline_upload,
     replace_insurance_pipeline_upload,
@@ -57,7 +61,7 @@ from .database import (
     replace_target_upload,
     replace_wins_lost,
 )
-from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_frontier_security_defense_workbook, parse_ra_workbook, parse_target_pivot, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_frontier_security_defense_workbook, parse_ra_workbook, parse_target_pivot, parse_workable_demand_workbook, parse_workbook, result_to_csv, unique_person_values
 
 
 OPENAPI_TAGS = [
@@ -94,6 +98,77 @@ app.add_middleware(
 
 REPORT_EXPORT_DIR = Path(tempfile.gettempdir()) / "sales-dashboard-reports"
 RECENT_PIPELINE_MARKER = "opportunity created in two weeks"
+
+
+def _workable_detail_date(value: object) -> date | None:
+    if isinstance(value, (int, float)):
+        return date(1899, 12, 30) + timedelta(days=int(value))
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date(1899, 12, 30) + timedelta(days=int(float(text)))
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        for pattern in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, pattern).date()
+            except ValueError:
+                continue
+    return None
+
+
+def workable_demand_skill_location(headers: list[str], rows: list[list[object]]) -> dict:
+    """Summarize the latest SO-submission week for BCM and Insurance 2."""
+    col_map = {str(header).strip(): index for index, header in enumerate(headers)}
+    submitted_index = _get_column(col_map, "SO Submission Date")
+    country_index = _get_column(col_map, "Country")
+    skills_index = _get_column(col_map, "Technical Skills Required")
+    bu_index = _get_column(col_map, "BU")
+    if None in (submitted_index, country_index, skills_index, bu_index):
+        return {"available": False, "rows": [], "detail": "The saved workbook is missing required SO Detail columns."}
+
+    dated_rows = [(row, _workable_detail_date(row[submitted_index] if submitted_index < len(row) else None)) for row in rows]
+    dates = [item_date for _, item_date in dated_rows if item_date]
+    if not dates:
+        return {"available": False, "rows": [], "detail": "No SO Submission Date values are available in the saved workbook."}
+    latest_date = max(dates)
+    week_start = latest_date - timedelta(days=6)
+    patterns = {
+        "Java": re.compile(r"\bjava\b", re.IGNORECASE),
+        ".Net": re.compile(r"(?<!\w)\.?\s*net\b|\bdot\s*net\b", re.IGNORECASE),
+        "UI - React/Angular": re.compile(r"\b(?:react|angular)\b", re.IGNORECASE),
+    }
+    totals = {name: {"us": 0.0, "india": 0.0} for name in patterns}
+    matched_rows = 0
+    for row, submitted_date in dated_rows:
+        if not submitted_date or not week_start <= submitted_date <= latest_date:
+            continue
+        bu = re.sub(r"[^a-z0-9]+", "", str(row[bu_index] if bu_index < len(row) else "").lower())
+        if not (bu.startswith("bankingcapitalmarkets") or bu == "insurance2"):
+            continue
+        country = str(row[country_index] if country_index < len(row) else "").strip().lower()
+        location = "us" if country in {"united states", "us", "usa"} else "india" if country == "india" else None
+        if not location:
+            continue
+        matched_rows += 1
+        skills = str(row[skills_index] if skills_index < len(row) else "")
+        for name, pattern in patterns.items():
+            if pattern.search(skills):
+                totals[name][location] += 1
+    return {
+        "available": True,
+        "weekStart": week_start.isoformat(),
+        "weekEnding": latest_date.isoformat(),
+        "rowsMatched": matched_rows,
+        "rows": [
+            {"skill": skill, "us": values["us"], "india": values["india"]}
+            for skill, values in totals.items()
+        ],
+    }
 
 
 def _presentation_node() -> str:
@@ -151,7 +226,12 @@ def _refresh_quality_pipeline_uploads() -> None:
             replace_quality_pipeline_upload(headers, _recent_pipeline_rows(headers, rows), source_filename or "", insurance)
 
 
-def _quality_pipeline_payload(headers: list[str], rows: list[list], source_filename: str | None) -> dict:
+def _quality_pipeline_payload(
+    headers: list[str],
+    rows: list[list],
+    source_filename: str | None,
+    total_rows: list[list] | None = None,
+) -> dict:
     if not rows:
         return {"available": False, "rows": [], "offerings": [], "campaigns": [], "opportunities": [], "campaignOpportunities": [], "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": 0}}
 
@@ -184,12 +264,15 @@ def _quality_pipeline_payload(headers: list[str], rows: list[list], source_filen
             missing.append("Offering/Solutions")
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
+    # The headline Quality of Pipeline table always reflects the complete BCM
+    # plus Insurance pipeline uploads. Charts and opportunity lists use `rows`,
+    # the separately persisted recent subset.
     totals = {"Qualified": {period: 0.0 for period in period_columns}, "Unqualified": {period: 0.0 for period in period_columns}}
     display_rows = _latest_pipeline_week_rows(headers, rows)
     offering_totals: dict[str, float] = {}
     campaign_totals: dict[str, float] = {}
     candidates: list[list] = []
-    for row in rows:
+    for row in total_rows if total_rows is not None else rows:
         stage = str(row[stage_column] if stage_column < len(row) else "").strip()
         label = "Qualified" if stage == "Qualified" else "Unqualified" if stage == "Un-Qualified" else None
         if not label:
@@ -251,7 +334,7 @@ def _quality_pipeline_payload(headers: list[str], rows: list[list], source_filen
         "campaigns": top_campaigns,
         "opportunities": sorted(opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
         "campaignOpportunities": sorted(campaign_opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
-        "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": len(rows), "displayRows": len(display_rows), "sourceFilename": source_filename},
+        "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": len(rows), "summaryRowsSaved": len(total_rows) if total_rows is not None else len(rows), "displayRows": len(display_rows), "sourceFilename": source_filename},
     }
 
 
@@ -584,7 +667,8 @@ async def quality_pipeline_summary() -> dict:
     try:
         await asyncio.to_thread(_refresh_quality_pipeline_uploads)
         headers, rows, source_filename = await asyncio.to_thread(load_quality_pipeline_upload)
-        return await asyncio.to_thread(_quality_pipeline_payload, headers, rows, source_filename)
+        _full_headers, full_rows, _full_source_filename = await asyncio.to_thread(load_pipeline_upload)
+        return await asyncio.to_thread(_quality_pipeline_payload, headers, rows, source_filename, full_rows)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1063,6 +1147,17 @@ async def current_demand_creation() -> dict:
     return await asyncio.to_thread(load_demand_creation_upload)
 
 
+@app.get("/api/demand-creation/skill-location", tags=["Demand Creation"])
+async def demand_creation_skill_location() -> dict:
+    upload = await asyncio.to_thread(load_workable_demand_so_detail_upload)
+    if not upload.get("available"):
+        return {"available": False, "rows": [], "detail": "Upload a Workable Demand report to populate this table."}
+    result = await asyncio.to_thread(workable_demand_skill_location, upload["headers"], upload["rows"])
+    result["sourceFilename"] = upload.get("sourceFilename")
+    result["database"] = {"table": upload.get("table"), "rowsSaved": upload.get("rowsSaved", 0)}
+    return result
+
+
 @app.post("/api/reports/ra/upload", tags=["Reports"])
 async def upload_ra_workbook(workbook: UploadFile = File(...)) -> dict:
     try:
@@ -1093,6 +1188,39 @@ async def upload_frontier_security_defense_workbook(workbook: UploadFile = File(
 @app.get("/api/reports/frontier-security-defense/current", tags=["Reports"])
 async def current_frontier_security_defense_workbook() -> dict:
     return await asyncio.to_thread(load_frontier_security_defense_upload)
+
+
+@app.post("/api/reports/workable-demand/upload", tags=["Reports"])
+async def upload_workable_demand_workbook(workbook: UploadFile = File(...)) -> dict:
+    try:
+        source_filename = workbook.filename or ""
+        parsed = await asyncio.to_thread(parse_workable_demand_workbook, await workbook.read(), source_filename)
+        rows_saved = await asyncio.to_thread(replace_workable_demand_upload, parsed["headers"], parsed["rows"], source_filename)
+        detail = parsed.get("detail")
+        detail_rows_saved = 0
+        if detail:
+            detail_rows_saved = await asyncio.to_thread(
+                replace_workable_demand_so_detail_upload,
+                detail["headers"],
+                detail["rows"],
+                source_filename,
+            )
+        return {
+            "available": rows_saved > 0,
+            "sourceFilename": source_filename,
+            "database": {"table": "workable_demand_upload", "rowsSaved": rows_saved, "sourceFilename": source_filename},
+            "sheetName": parsed["sheetName"],
+            "rowsSaved": rows_saved,
+            "detailSheetName": detail["sheetName"] if detail else None,
+            "detailRowsSaved": detail_rows_saved,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/workable-demand/current", tags=["Reports"])
+async def current_workable_demand_workbook() -> dict:
+    return await asyncio.to_thread(load_workable_demand_upload)
 
 
 @app.get("/api/bcmi-orig/ra-summary", tags=["Reports"])
@@ -1180,6 +1308,67 @@ async def bcmi_orig_biweekly_wins() -> dict:
         ],
         "sourceFilename": source_filename,
     }
+
+
+def _bcmi_orig_top_opportunities_payload(headers: list[str], rows: list[list], source_filename: str | None) -> dict:
+    """Build combined BCM + Insurance Top 10 lists for the BCMI - Orig periods."""
+    if not rows:
+        return {"available": False, "periods": {}, "database": {"table": "pipeline_upload + insurance_pipeline_upload", "rowsSaved": 0}}
+
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    columns = {
+        "estimatedClose": _get_column(col_map, "Estimated Deal Close Date"),
+        "category": _get_column(col_map, "Opportunity Category"),
+        "account": _get_column(col_map, "Financial Ultimate Parent Account", "Account Name"),
+        "description": _get_column(col_map, "Opportunity Name"),
+        "tcv": _get_column(col_map, "Net TCV Share (converted)", "Net TCV Share"),
+    }
+    missing = [name for name, index in columns.items() if index is None]
+    if missing:
+        raise ValueError(f"Missing columns: {', '.join(missing)}")
+
+    period_months = {"aug": {8}, "q3": {7, 8, 9}, "q4": {10, 11, 12}}
+    opportunities = {period: {} for period in period_months}
+    for row in rows:
+        category = str(row[columns["category"]] if columns["category"] is not None and columns["category"] < len(row) else "").strip().casefold()
+        if category == "renewal at existing clients":
+            continue
+        close_date = _pipeline_date(row[columns["estimatedClose"]] if columns["estimatedClose"] is not None and columns["estimatedClose"] < len(row) else None)
+        if close_date is None or close_date.year != 2026:
+            continue
+        account = str(row[columns["account"]] if columns["account"] is not None and columns["account"] < len(row) else "").strip()
+        description = str(row[columns["description"]] if columns["description"] is not None and columns["description"] < len(row) else "").strip()
+        # The same opportunity may appear in both uploaded pipeline sheets with
+        # distinct internal IDs. Combine it for a single dashboard entry.
+        key = f"{account}|{description}"
+        tcv = _to_number(row[columns["tcv"]] if columns["tcv"] is not None and columns["tcv"] < len(row) else 0)
+        for period, months in period_months.items():
+            if close_date.month not in months:
+                continue
+            item = opportunities[period].setdefault(key, {"account": account, "description": description, "totalTcv": 0.0})
+            item["totalTcv"] += tcv
+
+    return {
+        "available": True,
+        "periods": {
+            period: {
+                "totalTcv": sum(item["totalTcv"] for item in items.values()),
+                "rows": sorted(items.values(), key=lambda item: item["totalTcv"], reverse=True)[:10],
+            }
+            for period, items in opportunities.items()
+        },
+        "database": {"table": "pipeline_upload + insurance_pipeline_upload", "rowsSaved": len(rows), "sourceFilename": source_filename},
+    }
+
+
+@app.get("/api/bcmi-orig/top-opportunities", tags=["Pipeline"])
+async def bcmi_orig_top_opportunities() -> dict:
+    """Return combined BCM + Insurance pipeline Top 10 opportunities by TCV."""
+    try:
+        headers, rows, source_filename = await asyncio.to_thread(load_pipeline_upload)
+        return await asyncio.to_thread(_bcmi_orig_top_opportunities_payload, headers, rows, source_filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/reports/export", tags=["Reports"])

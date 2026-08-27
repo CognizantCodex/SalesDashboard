@@ -68,6 +68,23 @@ function parseFrontierSecurityDefenseWorkbook(file) {
   const rows = values.slice(headerIndex + 1).filter((row) => String(row[businessUnitIndex] ?? '').trim());
   return { sheetName, headers, rows };
 }
+function parseWorkableDemandWorkbook(file) {
+  if (!file?.buffer) throw new Error('A workbook is required.');
+  const workbook = XLSX.read(file.buffer, { type: 'buffer', cellDates: true });
+  const extract = (sheetName, required) => {
+    if (!workbook.SheetNames.includes(sheetName)) throw new Error(`Sheet "${sheetName}" was not found in workbook.`);
+    const values = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null, raw: true });
+    const headerIndex = values.findIndex((row) => Array.isArray(row) && required.every((name) => row.map((cell) => String(cell ?? '').trim()).includes(name)));
+    if (headerIndex < 0) throw new Error(`Missing required columns in "${sheetName}".`);
+    const headers = values[headerIndex].map((cell, index) => String(cell ?? '').trim() || `Column ${index + 1}`);
+    const parentIndex = headers.indexOf('Parent Customer');
+    return { sheetName, headers, rows: values.slice(headerIndex + 1).filter((row) => parentIndex < 0 ? row.some((cell) => cell !== null && String(cell).trim()) : String(row[parentIndex] ?? '').trim()) };
+  };
+  return {
+    base: extract('Base', ['Unique ID', 'Workable Demand']),
+    detail: extract('SO Detail by Parent Customer', ['SO Submission Date', 'Country', 'Technical Skills Required', 'BU']),
+  };
+}
 
 function save(kind, parsed, filename) {
   db.prepare(`INSERT INTO node_uploads(kind, source_filename, headers_json, rows_json, updated_at)
@@ -127,6 +144,7 @@ function refreshQualityPipelineData() { [['pipeline_upload', 'quality_pipeline_b
 function qualityPipelineSummary() {
   refreshQualityPipelineData();
   const data = merge('quality_pipeline_bcm_upload', 'quality_pipeline_insurance_upload');
+  const summaryData = merge('pipeline_upload', 'insurance_pipeline_upload');
   if (!data.rows.length) return { available: false, rows: [], offerings: [], campaigns: [], opportunities: [], campaignOpportunities: [], database: { table: 'quality_pipeline_bcm_upload + quality_pipeline_insurance_upload', rowsSaved: 0 } };
   const stageIndex = column(data.headers, ['grouped sales stage']);
   const subStatusIndex = column(data.headers, ['sub-status']);
@@ -142,13 +160,22 @@ function qualityPipelineSummary() {
     yearPlus: column(data.headers, ['ny $']),
     total: column(data.headers, ['net tcv share (converted)', 'net tcv share'])
   };
+  const summaryStageIndex = column(summaryData.headers, ['grouped sales stage']);
+  const summarySubStatusIndex = column(summaryData.headers, ['sub-status']);
+  const summaryPeriods = {
+    q3: column(summaryData.headers, ['cy q3 $']),
+    q4: column(summaryData.headers, ['cy q4 $']),
+    year: column(summaryData.headers, ['cy $', 'current year revenue (converted)']),
+    yearPlus: column(summaryData.headers, ['ny $']),
+    total: column(summaryData.headers, ['net tcv share (converted)', 'net tcv share'])
+  };
   const totals = Object.fromEntries(['Qualified', 'Unqualified'].map((label) => [label, Object.fromEntries(Object.keys(periods).map((period) => [period, 0]))]));
   const offeringTotals = new Map(); const campaignTotals = new Map(); const candidateRows = [];
-  data.rows.forEach((row) => {
-    const stage = String(value(row, stageIndex) || '').trim();
+  summaryData.rows.forEach((row) => {
+    const stage = String(value(row, summaryStageIndex) || '').trim();
     const label = stage === 'Qualified' ? 'Qualified' : stage === 'Un-Qualified' ? 'Unqualified' : null;
-    if (!label || key(value(row, subStatusIndex)) === 'negotiation') return;
-    Object.entries(periods).forEach(([period, index]) => { totals[label][period] += number(value(row, index)); });
+    if (!label || key(value(row, summarySubStatusIndex)) === 'negotiation') return;
+    Object.entries(summaryPeriods).forEach(([period, index]) => { totals[label][period] += number(value(row, index)); });
   });
   latestPipelineWeekRows(data).forEach((row) => {
     const stage = String(value(row, stageIndex) || '').trim();
@@ -158,7 +185,7 @@ function qualityPipelineSummary() {
   const topCategories = (totalsByCategory) => { const categories = [...totalsByCategory.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3); const total = categories.reduce((sum, [, value]) => sum + value, 0); return categories.map(([name, totalTcv]) => ({ name, totalTcv, percent: total ? totalTcv / total * 100 : 0 })); };
   const topOfferings = topCategories(offeringTotals); const topCampaigns = topCategories(campaignTotals); const selectedOfferings = new Set(topOfferings.map(({ name }) => name)); const selectedCampaigns = new Set(topCampaigns.map(({ name }) => name)); const opportunities = new Map(); const campaignOpportunities = new Map();
   candidateRows.forEach((row) => { const offering = String(value(row, offeringIndex) || '').trim() || 'Unspecified'; const campaign = campaignName(row, campaignIndex); const account = String(value(row, accountIndex) || '').trim(); const description = String(value(row, opportunityIndex) || '').trim(); const id = String(value(row, opportunityIdIndex) || '').trim() || `${account}|${description}`; const totalTcv = number(value(row, periods.total)); const yearTcv = number(value(row, periods.year)); if (selectedOfferings.has(offering)) { const item = opportunities.get(id) || { account, description, offering, totalTcv: 0, yearTcv: 0 }; item.totalTcv += totalTcv; item.yearTcv += yearTcv; opportunities.set(id, item); } if (selectedCampaigns.has(campaign)) { const item = campaignOpportunities.get(id) || { account, description, campaign, totalTcv: 0, yearTcv: 0 }; item.totalTcv += totalTcv; item.yearTcv += yearTcv; campaignOpportunities.set(id, item); } });
-  return { available: true, rows: Object.entries(totals).map(([label, values]) => ({ label, ...values })), offerings: topOfferings, campaigns: topCampaigns, opportunities: [...opportunities.values()].sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 6), campaignOpportunities: [...campaignOpportunities.values()].sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 6), database: { table: 'quality_pipeline_bcm_upload + quality_pipeline_insurance_upload', rowsSaved: data.rows.length, displayRows: latestPipelineWeekRows(data).length, sourceFilename: data.sourceFilename } };
+  return { available: true, rows: Object.entries(totals).map(([label, values]) => ({ label, ...values })), offerings: topOfferings, campaigns: topCampaigns, opportunities: [...opportunities.values()].sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 6), campaignOpportunities: [...campaignOpportunities.values()].sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 6), database: { table: 'quality_pipeline_bcm_upload + quality_pipeline_insurance_upload', rowsSaved: data.rows.length, summaryRowsSaved: summaryData.rows.length, displayRows: latestPipelineWeekRows(data).length, sourceFilename: data.sourceFilename } };
 }
 function bcmiOrigRevenueSummary() {
   const data = revenueData();
@@ -212,6 +239,42 @@ function bcmiOrigBiweeklyWins() {
   const rows = wins.filter((item) => item.week === latestWeek).sort((a, b) => number(value(b.row, indexes.netTcv)) - number(value(a.row, indexes.netTcv))).slice(0, 5).map(({ row }) => ({ account: String(value(row, indexes.account) || '').trim(), description: String(value(row, indexes.description) || '').trim(), netTcv: number(value(row, indexes.netTcv)), cyRevenue: number(value(row, indexes.cyRevenue)) }));
   return { available: true, latestWeek, rows, sourceFilename: data.sourceFilename };
 }
+function bcmiOrigTopOpportunities() {
+  const data = pipelineData();
+  if (!data.rows.length) return { available: false, periods: {}, database: { table: 'pipeline_upload + insurance_pipeline_upload', rowsSaved: 0 } };
+  const indexes = { estimatedClose: column(data.headers, ['estimated deal close date']), category: column(data.headers, ['opportunity category']), account: column(data.headers, ['financial ultimate parent account', 'account name']), description: column(data.headers, ['opportunity name']), tcv: column(data.headers, ['net tcv share (converted)', 'net tcv share']) };
+  if (Object.values(indexes).some((index) => index < 0)) return { available: false, periods: {}, detail: 'Missing required pipeline columns.' };
+  const periodMonths = { aug: new Set([8]), q3: new Set([7, 8, 9]), q4: new Set([10, 11, 12]) };
+  const opportunities = Object.fromEntries(Object.keys(periodMonths).map((period) => [period, new Map()]));
+  const closeDate = (raw) => { const numeric = Number(raw); if (Number.isFinite(numeric)) return new Date(Date.UTC(1899, 11, 30 + numeric)); const parsed = new Date(String(raw || '')); return Number.isNaN(parsed.valueOf()) ? null : parsed; };
+  data.rows.forEach((row) => { if (key(value(row, indexes.category)) === 'renewal at existing clients') return; const close = closeDate(value(row, indexes.estimatedClose)); if (!close || close.getUTCFullYear() !== 2026) return; const account = String(value(row, indexes.account) || '').trim(); const description = String(value(row, indexes.description) || '').trim(); const id = `${account}|${description}`; const tcv = number(value(row, indexes.tcv)); Object.entries(periodMonths).forEach(([period, months]) => { if (!months.has(close.getUTCMonth() + 1)) return; const item = opportunities[period].get(id) || { account, description, totalTcv: 0 }; item.totalTcv += tcv; opportunities[period].set(id, item); }); });
+  return { available: true, periods: Object.fromEntries(Object.entries(opportunities).map(([period, items]) => { const rows = [...items.values()]; return [period, { totalTcv: rows.reduce((sum, item) => sum + item.totalTcv, 0), rows: rows.sort((a, b) => b.totalTcv - a.totalTcv).slice(0, 10) }]; })), database: { table: 'pipeline_upload + insurance_pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } };
+}
+function workableDemandSkillLocation() {
+  const data = raw('workable_demand_so_detail_upload');
+  const submitted = column(data.headers, ['so submission date']), country = column(data.headers, ['country']), skills = column(data.headers, ['technical skills required']), bu = column(data.headers, ['bu']);
+  if (!data.rows.length || [submitted, country, skills, bu].some((index) => index < 0)) return { available: false, rows: [], detail: 'Upload a Workable Demand report to populate this table.' };
+  const asDate = (raw) => { const numeric = Number(raw); if (Number.isFinite(numeric)) return new Date(Date.UTC(1899, 11, 30 + numeric)); const parsed = new Date(String(raw || '')); return Number.isNaN(parsed.valueOf()) ? null : parsed; };
+  const dated = data.rows.map((row) => ({ row, date: asDate(value(row, submitted)) })).filter(({ date }) => date);
+  const latest = dated.reduce((maximum, item) => !maximum || item.date > maximum ? item.date : maximum, null);
+  if (!latest) return { available: false, rows: [] };
+  const start = new Date(latest); start.setUTCDate(start.getUTCDate() - 6);
+  const totals = { Java: { us: 0, india: 0 }, '.Net': { us: 0, india: 0 }, 'UI - React/Angular': { us: 0, india: 0 } };
+  let rowsMatched = 0;
+  dated.forEach(({ row, date }) => {
+    const business = key(value(row, bu)).replace(/[^a-z0-9]+/g, '');
+    if (date < start || !(/^(bankingcapitalmarkets)/.test(business) || business === 'insurance2')) return;
+    const place = ['united states', 'us', 'usa'].includes(key(value(row, country))) ? 'us' : key(value(row, country)) === 'india' ? 'india' : null;
+    if (!place) return;
+    rowsMatched += 1;
+    const text = String(value(row, skills) || ''); const amount = 1;
+    if (/\bjava\b/i.test(text)) totals.Java[place] += amount;
+    if (/(?<!\w)\.?\s*net\b|\bdot\s*net\b/i.test(text)) totals['.Net'][place] += amount;
+    if (/\b(?:react|angular)\b/i.test(text)) totals['UI - React/Angular'][place] += amount;
+  });
+  const stamp = (date) => date.toISOString().slice(0, 10);
+  return { available: true, weekStart: stamp(start), weekEnding: stamp(latest), rowsMatched, rows: Object.entries(totals).map(([skill, values]) => ({ skill, ...values })), sourceFilename: data.sourceFilename, database: { table: 'workable_demand_so_detail_upload', rowsSaved: data.rows.length } };
+}
 
 app.get('/health', (_, res) => res.json({ ok: true, agent: 'sls-forecast-agent-node', backend: 'node' }));
 function mergedMetadata(primary, insurance) { const a = metadata(primary), b = metadata(insurance); return { available: a.available || b.available, database: { ...a, available: a.available || b.available, rowsSaved: a.rowsSaved + b.rowsSaved, sourceFilename: [a.sourceFilename, b.sourceFilename].filter(Boolean).join(' + '), insuranceRowsSaved: b.rowsSaved } }; }
@@ -220,6 +283,7 @@ app.get('/api/forecast/insurance/upload/metadata', (_, res) => res.json({ availa
 app.get('/api/bcmi-orig/revenue-summary', (_, res) => res.json(bcmiOrigRevenueSummary()));
 app.get('/api/bcmi-orig/ra-summary', (_, res) => res.json(bcmiOrigRaSummary()));
 app.get('/api/bcmi-orig/biweekly-wins', (_, res) => res.json(bcmiOrigBiweeklyWins()));
+app.get('/api/bcmi-orig/top-opportunities', (_, res) => res.json(bcmiOrigTopOpportunities()));
 app.get('/api/pipeline/upload/metadata', (_, res) => res.json(mergedMetadata('pipeline_upload', 'insurance_pipeline_upload')));
 app.get('/api/pipeline/insurance/upload/metadata', (_, res) => res.json({ available: metadata('insurance_pipeline_upload').available, database: metadata('insurance_pipeline_upload') }));
 app.get('/api/quality-pipeline/summary', (_, res) => res.json(qualityPipelineSummary()));
@@ -233,6 +297,7 @@ pipelineUploadRoute('/api/pipeline/upload', 'pipeline_upload', 'quality_pipeline
 uploadRoute('/api/slsm/forecast/upload', 'revenue_forecast', 'SL_Forecast -2026'); uploadRoute('/api/slsm/pipeline/upload', 'pipeline_upload');
 app.post('/api/reports/ra/upload', upload.single('workbook'), (req, res) => { try { const record = save('ra_upload', parseRaWorkbook(req.file), req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record }); } catch (error) { res.status(400).json({ detail: error.message }); } });
 app.post('/api/reports/frontier-security-defense/upload', upload.single('workbook'), (req, res) => { try { const parsed = parseFrontierSecurityDefenseWorkbook(req.file); const record = save('frontier_security_defense_upload', parsed, req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record, ...parsed }); } catch (error) { res.status(400).json({ detail: error.message }); } });
+app.post('/api/reports/workable-demand/upload', upload.single('workbook'), (req, res) => { try { const parsed = parseWorkableDemandWorkbook(req.file); const record = save('workable_demand_upload', parsed.base, req.file.originalname); const detail = save('workable_demand_so_detail_upload', parsed.detail, req.file.originalname); res.json({ available: record.available, sourceFilename: req.file.originalname, database: record, sheetName: 'Base', rowsSaved: record.rowsSaved, detailSheetName: parsed.detail.sheetName, detailRowsSaved: detail.rowsSaved }); } catch (error) { res.status(400).json({ detail: error.message }); } });
 
 app.get('/api/forecast/current', (req,res) => res.json(forecastResult(req.query.slsName || '', 'sls')));
 app.get('/api/slsm/forecast/current', (req,res) => res.json(forecastResult(req.query.slsmName || '', 'slsm')));
@@ -241,6 +306,8 @@ app.get('/api/pipeline/summary/current', (req,res) => res.json(pipelineResult(re
 app.get('/api/slsm/pipeline/summary/current', (req,res) => res.json(pipelineResult(req.query.slsmName || '', 'slsm')));
 app.get('/api/reports/ra/current', (_, res) => { const record = metadata('ra_upload'); res.json({ available: record.available, sourceFilename: record.sourceFilename, rowsSaved: record.rowsSaved }); });
 app.get('/api/reports/frontier-security-defense/current', (_, res) => { const record = raw('frontier_security_defense_upload'); res.json({ available: record.rows.length > 0, sourceFilename: record.sourceFilename, rowsSaved: record.rows.length, sheetName: 'Opportunity Input', headers: record.headers, rows: record.rows }); });
+app.get('/api/reports/workable-demand/current', (_, res) => { const record = raw('workable_demand_upload'); res.json({ available: record.rows.length > 0, sourceFilename: record.sourceFilename, rowsSaved: record.rows.length, sheetName: 'Base', headers: record.headers, rows: record.rows }); });
+app.get('/api/demand-creation/skill-location', (_, res) => res.json(workableDemandSkillLocation()));
 for (const [route, dimension, query, type] of [['/api/won-lost/summary/current','sls','slsName','won'],['/api/slsm/won-lost/summary/current','slsm','slsmName','won'],['/api/pending-validation/summary/current','sls','slsName','pending'],['/api/slsm/pending-validation/summary/current','slsm','slsmName','pending']]) app.get(route, (req,res) => { const data = pipelineData(); const metrics = pipelineMetrics(data, req.query[query] || '', dimension, type); res.json({ available: data.rows.length > 0, query: req.query[query] || '', metrics, database: { table: 'pipeline_upload', rowsSaved: data.rows.length, sourceFilename: data.sourceFilename } }); });
 app.get('/api/slsl/summary/current', (_, res) => { const rev = revenueData(), pipe = pipelineData(); const names = [...new Set([...uniquePeople(rev,'slsm'), ...uniquePeople(pipe,'slsm')])]; const rows = names.map((slsmName) => { const revenue = revenueMetrics(rev,slsmName,'slsm'), pipeline = pipelineMetrics(pipe,slsmName,'slsm'), won = pipelineMetrics(pipe,slsmName,'slsm','won'), pending = pipelineMetrics(pipe,slsmName,'slsm','pending'); const total = won.won + pending.pendingValidation; return { slsmName, revenue, pipeline, realizedTcv: { total, won: won.won, pendingValidation: pending.pendingValidation, rows: won.rows + pending.rows, labels: { total: money(total), won: won.labels.won, pendingValidation: pending.labels.pendingValidation } } }; }); res.json({ available: rows.length > 0, year: new Date().getFullYear(), rows, database: { revenue: { rowsSaved: rev.rows.length, sourceFilename: rev.sourceFilename }, pipeline: { rowsSaved: pipe.rows.length, sourceFilename: pipe.sourceFilename } } }); });
 app.get('/api/slsm/sls-breakdown/current', (req,res) => { const name = req.query.slsmName || ''; if (!name) return res.status(400).json({ detail: 'SLSM name is required.' }); const rev = revenueData(), pipe = pipelineData(); const names = [...new Set([...personRows(rev,name,'slsm').map((row)=>String(value(row,column(rev.headers,aliases.sls))||'').trim()), ...personRows(pipe,name,'slsm').map((row)=>String(value(row,column(pipe.headers,aliases.sls))||'').trim())])].filter(Boolean); const rows = names.map((slsName) => { const revenue=revenueMetrics(rev,slsName,'sls'), pipeline=pipelineMetrics(pipe,slsName,'sls'), won=pipelineMetrics(pipe,slsName,'sls','won'), pending=pipelineMetrics(pipe,slsName,'sls','pending'); const total=won.won+pending.pendingValidation; return {slsName,revenue,pipeline,realizedTcv:{total,won:won.won,pendingValidation:pending.pendingValidation,rows:won.rows+pending.rows,labels:{total:money(total),won:won.labels.won,pendingValidation:pending.labels.pendingValidation}}}; }).filter((row)=>[row.revenue.forecast,row.revenue.target,row.revenue.gap,row.pipeline.pipeline,row.pipeline.qualified,row.pipeline.unqualified,row.realizedTcv.total].some(Boolean)); res.json({available:rows.length>0,query:name,year:new Date().getFullYear(),rows}); });

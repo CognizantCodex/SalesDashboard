@@ -3,22 +3,27 @@ import { apiUrl } from './api.js';
 import UploadOption from './upload_option.jsx';
 
 const VALID_WORKBOOK = /\.(xlsb|xlsx|xlsm)$/i;
-const SKILL_LOCATION_ROWS = ['Java', 'FSD', '.Net', 'UI – React/Angular'];
-
 function demandLabel(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
 export default function DemandCreation() {
   const [result, setResult] = useState(null);
+  const [skillLocation, setSkillLocation] = useState(null);
   const [error, setError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
   React.useEffect(() => {
     let isActive = true;
-    fetch(apiUrl('/api/demand-creation/current'))
-      .then((response) => response.ok ? response.json() : null)
-      .then((payload) => { if (isActive && payload?.available) setResult(payload); })
+    Promise.all([
+      fetch(apiUrl('/api/demand-creation/current')).then((response) => response.ok ? response.json() : null),
+      fetch(apiUrl('/api/demand-creation/skill-location')).then((response) => response.ok ? response.json() : null),
+    ])
+      .then(([demandPayload, skillPayload]) => {
+        if (!isActive) return;
+        if (demandPayload?.available) setResult(demandPayload);
+        if (skillPayload?.available) setSkillLocation(skillPayload);
+      })
       .catch(() => {});
     return () => { isActive = false; };
   }, []);
@@ -74,7 +79,7 @@ export default function DemandCreation() {
           <section className="demand-executive-grid">
             <div className="demand-left-stack">
               <DemandProfileTable data={result.demandProfile} />
-              <SkillLocationTable />
+              <SkillLocationTable data={skillLocation} />
             </div>
             <div className="demand-right-stack">
               <DemandLineChart rows={result.series || []} />
@@ -87,16 +92,21 @@ export default function DemandCreation() {
   );
 }
 
-function SkillLocationTable() {
+function SkillLocationTable({ data }) {
+  const rows = data?.rows || [
+    { skill: 'Java', us: null, india: null },
+    { skill: '.Net', us: null, india: null },
+    { skill: 'UI - React/Angular', us: null, india: null },
+  ];
   return (
     <section className="skill-location-card" aria-label="Demand by skill and location">
       <h2>By Skill / Location</h2>
+      {data?.weekEnding && <p className="skill-location-period">Latest week: {data.weekStart} to {data.weekEnding}</p>}
       <table>
         <thead>
-          <tr><th rowSpan="2">Skills</th><th colSpan="3">Onsite</th><th colSpan="3">Offshore</th></tr>
-          <tr><th>Major US<br />Location 1</th><th>Major US<br />Location 2</th><th>Others</th><th>Major India<br />Location 1</th><th>Major India<br />Location 2</th><th>Others</th></tr>
+          <tr><th>Skills</th><th>US</th><th>India</th></tr>
         </thead>
-        <tbody>{SKILL_LOCATION_ROWS.map((skill) => <tr key={skill}><th scope="row">{skill}</th>{Array.from({ length: 6 }, (_, index) => <td key={index}>—</td>)}</tr>)}</tbody>
+        <tbody>{rows.map((row) => <tr key={row.skill}><th scope="row">{row.skill}</th><td>{row.us === null ? '—' : demandLabel(row.us)}</td><td>{row.india === null ? '—' : demandLabel(row.india)}</td></tr>)}</tbody>
       </table>
     </section>
   );

@@ -218,6 +218,32 @@ def test_frontier_security_defense_storage_round_trip(tmp_path, monkeypatch):
     assert saved["rows"] == payload["rows"]
 
 
+def test_workable_demand_upload_replaces_saved_base_sheet(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "dashboard.db")
+    first_rows = [["SO-1", "Yes"]]
+    database.replace_workable_demand_upload(["Unique ID", "Workable Demand"], first_rows, "first.xlsb")
+    database.replace_workable_demand_upload(["Unique ID", "Workable Demand"], [["SO-2", "No"], ["SO-3", "Yes"]], "latest.xlsb")
+
+    saved = database.load_workable_demand_upload()
+
+    assert saved["available"] is True
+    assert saved["sourceFilename"] == "latest.xlsb"
+    assert saved["rowsSaved"] == 2
+    assert saved["rows"] == [["SO-2", "No"], ["SO-3", "Yes"]]
+
+
+def test_workable_demand_upload_endpoint(monkeypatch):
+    parsed = {"sheetName": "Base", "headers": ["Unique ID", "Workable Demand"], "rows": [["SO-1", "Yes"]], "rowsSaved": 1}
+    monkeypatch.setattr(main, "parse_workable_demand_workbook", lambda *_args: parsed)
+    monkeypatch.setattr(main, "replace_workable_demand_upload", lambda *_args: 1)
+
+    upload = client.post("/api/reports/workable-demand/upload", files=upload_file())
+
+    assert upload.status_code == 200
+    assert upload.json()["database"]["table"] == "workable_demand_upload"
+    assert upload.json()["rowsSaved"] == 1
+
+
 def test_quality_pipeline_uses_two_week_rows_and_combines_top_opportunities():
     headers = [
         "Opportunity Created in Two weeks or Old", "Grouped Sales Stage", "Sub-Status", "Offering/Solutions",
@@ -233,14 +259,37 @@ def test_quality_pipeline_uses_two_week_rows_and_combines_top_opportunities():
     ]
 
     recent = main._recent_pipeline_rows(headers, rows)
-    payload = main._quality_pipeline_payload(headers, recent, "pipeline.xlsx")
+    payload = main._quality_pipeline_payload(headers, recent, "pipeline.xlsx", rows)
 
     assert len(recent) == 4
     assert [offering["name"] for offering in payload["offerings"]] == ["Modernize", "Optimize", "Assure"]
     assert [opportunity["description"] for opportunity in payload["opportunities"]] == ["Opportunity A", "Opportunity B", "Opportunity C", "Opportunity D"]
     assert [campaign["name"] for campaign in payload["campaigns"]] == ["Campaign A", "Campaign B", "Campaign C"]
     assert [opportunity["description"] for opportunity in payload["campaignOpportunities"]] == ["Opportunity A", "Opportunity B", "Opportunity C", "Opportunity D"]
-    assert payload["rows"][0]["total"] == 260
+    assert payload["rows"][0]["total"] == 1259
+    assert payload["rows"][1]["total"] == 80
+
+
+def test_bcmi_orig_top_opportunities_combines_pipeline_rows_and_excludes_renewals():
+    headers = [
+        "Estimated Deal Close Date", "Opportunity Category", "WinZone Opportunity ID",
+        "Financial Ultimate Parent Account", "Opportunity Name", "Net TCV Share (converted)",
+    ]
+    rows = [
+        ["2026-08-05", "New Client", "A", "Account A", "Opportunity A", 100],
+        ["2026-08-05", "New Client", "A", "Account A", "Opportunity A", 50],
+        ["2026-09-15", "Expansion", "B", "Account B", "Opportunity B", 80],
+        ["2026-10-01", "Expansion", "C", "Account C", "Opportunity C", 200],
+        ["2026-08-10", "Renewal at Existing Clients", "D", "Account D", "Excluded Renewal", 999],
+        ["2025-08-10", "New Client", "E", "Account E", "Prior Year", 500],
+    ]
+
+    payload = main._bcmi_orig_top_opportunities_payload(headers, rows, "pipeline.xlsx")
+
+    assert payload["periods"]["aug"]["totalTcv"] == 150
+    assert [item["description"] for item in payload["periods"]["aug"]["rows"]] == ["Opportunity A"]
+    assert [item["description"] for item in payload["periods"]["q3"]["rows"]] == ["Opportunity A", "Opportunity B"]
+    assert [item["description"] for item in payload["periods"]["q4"]["rows"]] == ["Opportunity C"]
 
 
 def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):
@@ -817,3 +866,26 @@ def test_private_helpers():
     rows = [["Alpha Manager", "Seller A"], ["Beta Manager", "Seller B"]]
     assert main._filter_rows_by_person(rows, ["SLSM", "SLS"], "alpha manager", "SLSM") == [["Alpha Manager", "Seller A"]]
     assert main._unique_child_people(rows, ["SLSM", "SLS"], "SLS") == {"Seller A", "Seller B"}
+
+
+def test_workable_demand_skill_location_uses_latest_week_bcm_and_insurance_2():
+    headers = ["SO Submission Date", "Country", "Technical Skills Required", "BU"]
+    rows = [
+        [46260, "United States", "Core Java, React", "Banking & Capital Markets - NA"],
+        [46259, "India", ".NET, Angular", "Insurance 2"],
+        [46253, "India", "Java", "Insurance 2"],
+        [46260, "India", "Java", "Insurance 1"],
+        [46260, "Canada", "Java", "Insurance 2"],
+    ]
+
+    result = main.workable_demand_skill_location(headers, rows)
+
+    assert result["available"] is True
+    assert result["weekEnding"] == "2026-08-26"
+    assert result["weekStart"] == "2026-08-20"
+    assert result["rowsMatched"] == 2
+    assert result["rows"] == [
+        {"skill": "Java", "us": 1.0, "india": 0.0},
+        {"skill": ".Net", "us": 0.0, "india": 1.0},
+        {"skill": "UI - React/Angular", "us": 1.0, "india": 1.0},
+    ]

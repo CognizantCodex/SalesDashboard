@@ -13,6 +13,10 @@ export default function ReportGeneration() {
   const [frontierSourceFilename, setFrontierSourceFilename] = useState('');
   const [frontierRowsSaved, setFrontierRowsSaved] = useState(0);
   const [isUploadingFrontier, setIsUploadingFrontier] = useState(false);
+  const [workableDemandAvailable, setWorkableDemandAvailable] = useState(false);
+  const [workableDemandSourceFilename, setWorkableDemandSourceFilename] = useState('');
+  const [workableDemandRowsSaved, setWorkableDemandRowsSaved] = useState(0);
+  const [isUploadingWorkableDemand, setIsUploadingWorkableDemand] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingStatus, setIsLoadingStatus] = useState(true);
   const [error, setError] = useState('');
@@ -21,8 +25,9 @@ export default function ReportGeneration() {
     Promise.all([
       fetch(apiUrl('/api/demand-creation/current')).then((response) => response.ok ? response.json() : null),
       fetch(apiUrl('/api/reports/ra/current')).then((response) => response.ok ? response.json() : null),
-      fetch(apiUrl('/api/reports/frontier-security-defense/current')).then((response) => response.ok ? response.json() : null)
-    ]).then(([demand, ra, frontier]) => {
+      fetch(apiUrl('/api/reports/frontier-security-defense/current')).then((response) => response.ok ? response.json() : null),
+      fetch(apiUrl('/api/reports/workable-demand/current')).then((response) => response.ok ? response.json() : null)
+    ]).then(([demand, ra, frontier, workableDemand]) => {
       setAvailable(Boolean(demand?.available));
       setSourceFilename(demand?.sourceFilename || '');
       setRaAvailable(Boolean(ra?.available));
@@ -31,6 +36,9 @@ export default function ReportGeneration() {
       setFrontierAvailable(Boolean(frontier?.available));
       setFrontierSourceFilename(frontier?.sourceFilename || '');
       setFrontierRowsSaved(frontier?.rowsSaved || 0);
+      setWorkableDemandAvailable(Boolean(workableDemand?.available));
+      setWorkableDemandSourceFilename(workableDemand?.sourceFilename || '');
+      setWorkableDemandRowsSaved(workableDemand?.rowsSaved || 0);
     }).catch(() => setAvailable(false)).finally(() => setIsLoadingStatus(false));
   }, []);
 
@@ -74,6 +82,28 @@ export default function ReportGeneration() {
       setError(uploadError.message);
     } finally {
       setIsUploadingFrontier(false);
+      event.target.value = '';
+    }
+  }
+
+  async function uploadWorkableDemandWorkbook(event) {
+    const workbook = event.target.files?.[0];
+    if (!workbook) return;
+    setError('');
+    setIsUploadingWorkableDemand(true);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', workbook);
+      const response = await fetch(apiUrl('/api/reports/workable-demand/upload'), { method: 'POST', body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Unable to upload the Workable Demand workbook.');
+      setWorkableDemandAvailable(Boolean(payload.available));
+      setWorkableDemandSourceFilename(payload.sourceFilename || workbook.name);
+      setWorkableDemandRowsSaved(payload.database?.rowsSaved || 0);
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setIsUploadingWorkableDemand(false);
       event.target.value = '';
     }
   }
@@ -131,6 +161,10 @@ export default function ReportGeneration() {
         <section className="report-action-card report-ra-upload-card">
           <div><h2>Frontier Security &amp; Defense Opportunities</h2><p>{frontierAvailable ? `${frontierSourceFilename || 'Opportunity workbook'} saved with ${frontierRowsSaved.toLocaleString()} opportunity rows.` : 'Upload the Opportunity Input sheet to save Frontier Security & Defense opportunities.'}</p></div>
           <label className="report-download-button report-upload-button">{isUploadingFrontier ? 'Uploading opportunities…' : 'Upload Opportunities'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadFrontierWorkbook} disabled={isUploadingFrontier} /></label>
+        </section>
+        <section className="report-action-card report-ra-upload-card">
+          <div><h2>Workable Demand Report</h2><p>{workableDemandAvailable ? `${workableDemandSourceFilename || 'Workable Demand workbook'} saved with ${workableDemandRowsSaved.toLocaleString()} Base-sheet rows. Uploading a new workbook replaces this saved data.` : 'Upload a Workable Demand workbook to save its Base-sheet data. A new upload replaces the previous data.'}</p></div>
+          <label className="report-download-button report-upload-button">{isUploadingWorkableDemand ? 'Uploading Workable Demand…' : 'Upload Workable Demand'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadWorkableDemandWorkbook} disabled={isUploadingWorkableDemand} /></label>
         </section>
         {error && <p className="report-error" role="alert">{error}</p>}
         </>}

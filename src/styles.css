@@ -1690,3 +1690,9 @@ tr.total-row td:nth-child(n + 3) {
 
 .quality-summary th:first-child { width: 18%; }
 .quality-summary thead th:not(:first-child), .quality-summary tbody td { width: 16.4%; text-align: center; white-space: nowrap; }
+
+/* Keep the three BCMI Top 10 opportunity tables visually identical in height. */
+.bcmi-orig-periods > .bcmi-orig-opportunity { display: flex; flex-direction: column; min-width: 0; }
+.bcmi-orig-opportunity table { height: 320px; }
+.bcmi-orig-opportunity th, .bcmi-orig-opportunity td { height: 26px; vertical-align: middle; }
+.bcmi-orig-opportunity th:nth-child(2), .bcmi-orig-opportunity td:nth-child(2), .bcmi-orig-opportunity th:nth-child(3), .bcmi-orig-opportunity td:nth-child(3) { overflow-wrap: anywhere; text-align: left; white-space: normal; word-break: break-word; }

@@ -43,6 +43,8 @@ FRONTIER_SECURITY_DEFENSE_REQUIRED_COLUMNS = (
     "Frontier Model *",
     "SEG TCV Value (USD) *",
 )
+WORKABLE_DEMAND_BASE_SHEET = "Base"
+WORKABLE_DEMAND_DETAIL_SHEET = "SO Detail by Parent Customer"
 
 
 def _get_column(col_map: dict[str, int], *names: str) -> int | None:
@@ -1174,6 +1176,68 @@ def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
         sheets.append({"sheetName": sheet_name, "headers": headers, "rows": rows, "rowsSaved": len(rows)})
 
     return {"sheets": sheets, "rowsSaved": sum(sheet["rowsSaved"] for sheet in sheets)}
+
+
+def parse_workable_demand_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
+    """Extract the Base and SO-detail sources in a Workable Demand workbook."""
+    values = _read_sheet(file_bytes, filename, WORKABLE_DEMAND_BASE_SHEET)
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(values)
+            if "Unique ID" in {str(cell or "").strip() for cell in row}
+            and "Workable Demand" in {str(cell or "").strip() for cell in row}
+        ),
+        None,
+    )
+    if header_index is None:
+        raise ValueError('Missing the "Unique ID" and "Workable Demand" header row in the Base sheet.')
+
+    headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(values[header_index])]
+    rows = [
+        [_ra_serializable_cell(_cell(row, index)) for index in range(len(headers))]
+        for row in values[header_index + 1 :]
+        if any(_cell(row, index) not in (None, "") for index in range(len(headers)))
+    ]
+    detail_values = _read_sheet(file_bytes, filename, WORKABLE_DEMAND_DETAIL_SHEET)
+    detail_header_index = next(
+        (
+            index
+            for index, row in enumerate(detail_values)
+            if {"SO Submission Date", "Country", "Technical Skills Required", "BU"}.issubset(
+                {str(cell or "").strip() for cell in row}
+            )
+        ),
+        None,
+    )
+    if detail_header_index is None:
+        raise ValueError(
+            'Missing the "SO Submission Date", "Country", "Technical Skills Required", or "BU" header row '
+            'in the "SO Detail by Parent Customer" sheet.'
+        )
+
+    detail_headers = [
+        str(value or "").strip() or f"Column {index + 1}"
+        for index, value in enumerate(detail_values[detail_header_index])
+    ]
+    parent_customer_index = _get_row_header_index(detail_headers, "Parent Customer")
+    detail_rows = [
+        [_ra_serializable_cell(_cell(row, index)) for index in range(len(detail_headers))]
+        for row in detail_values[detail_header_index + 1 :]
+        if parent_customer_index is not None and str(_cell(row, parent_customer_index) or "").strip()
+    ]
+    return {
+        "sheetName": WORKABLE_DEMAND_BASE_SHEET,
+        "headers": headers,
+        "rows": rows,
+        "rowsSaved": len(rows),
+        "detail": {
+            "sheetName": WORKABLE_DEMAND_DETAIL_SHEET,
+            "headers": detail_headers,
+            "rows": detail_rows,
+            "rowsSaved": len(detail_rows),
+        },
+    }
 
 
 def parse_frontier_security_defense_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
