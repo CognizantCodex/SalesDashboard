@@ -18,7 +18,9 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from .database import (
     load_demand_creation_upload,
+    load_erosion_upload,
     load_frontier_security_defense_upload,
+    load_frontier_models_upload,
     load_workable_demand_upload,
     load_workable_demand_so_detail_upload,
     load_quality_pipeline_upload,
@@ -45,7 +47,9 @@ from .database import (
     load_wins_lost_metadata,
     replace_pending_validation,
     replace_demand_creation_upload,
+    replace_erosion_upload,
     replace_frontier_security_defense_upload,
+    replace_frontier_models_upload,
     replace_workable_demand_upload,
     replace_workable_demand_so_detail_upload,
     replace_ra_upload,
@@ -61,7 +65,7 @@ from .database import (
     replace_target_upload,
     replace_wins_lost,
 )
-from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_frontier_security_defense_workbook, parse_ra_workbook, parse_target_pivot, parse_workable_demand_workbook, parse_workbook, result_to_csv, unique_person_values
+from .forecast_agent import TARGETS_SHEET, SLSM_FORECAST_SHEET, _get_column, _matches_name_permutation, _to_number, analyze_forecast_rows, analyze_pending_validation_rows, analyze_pipeline_rows, analyze_won_lost_rows, normalize_slsm_forecast_rows, parse_demand_creation_workbook, parse_erosion_workbook, parse_frontier_models_workbook, parse_frontier_security_defense_workbook, parse_ra_workbook, parse_target_pivot, parse_workable_demand_workbook, parse_workbook, result_to_csv, unique_person_values
 
 
 OPENAPI_TAGS = [
@@ -218,6 +222,63 @@ def _latest_pipeline_week_rows(headers: list[str], rows: list[list]) -> list[lis
     return [row for row, value in zip(rows, dates) if value is not None and value >= cutoff]
 
 
+def _frontier_model_quality_data(frontier_upload: dict) -> tuple[list[dict], list[dict]]:
+    """Build the Frontier Models chart and opportunity table from its Base sheet."""
+    headers = frontier_upload.get("headers") or []
+    rows = frontier_upload.get("rows") or []
+    if not rows:
+        return [], []
+
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    bu_column = _get_column(col_map, "BU")
+    model_column = _get_column(col_map, "Frontier Model")
+    close_date_column = _get_column(col_map, "Deal Close Date", "Estimated Deal Close Date")
+    tcv_column = _get_column(col_map, "Overall TCV", "SEG TCV")
+    account_column = _get_column(col_map, "Parent Customer", "Financial Ultimate Parent Account", "Account Name")
+    opportunity_column = _get_column(col_map, "Opportunity Name")
+    opportunity_id_column = _get_column(col_map, "WinZone Opportunity ID")
+    year_column = _get_column(col_map, "FY26 SEG Rev.", "CY $")
+    if any(column is None for column in (bu_column, model_column, close_date_column, tcv_column)):
+        return [], []
+
+    selected_bus = {"banking & capital markets - na", "insurance 2"}
+    filtered = [
+        row for row in rows
+        if str(_cell(row, bu_column) or "").strip().casefold() in selected_bus
+        and str(_cell(row, model_column) or "").strip()
+    ]
+    dated_rows = [(row, _pipeline_date(_cell(row, close_date_column))) for row in filtered]
+    # Use the current Monday–Sunday period rather than the latest date contained
+    # in a workbook, which may include forecast dates years ahead.
+    this_week_start = date.today() - timedelta(days=date.today().weekday())
+    this_week_end = this_week_start + timedelta(days=6)
+    last_week_rows = [
+        row for row, value in dated_rows
+        if value is not None and this_week_start <= value <= this_week_end
+    ]
+
+    model_totals: dict[str, float] = {}
+    opportunities: dict[str, dict] = {}
+    for row in last_week_rows:
+        model = str(_cell(row, model_column) or "").strip()
+        tcv = _to_number(_cell(row, tcv_column))
+        model_totals[model] = model_totals.get(model, 0.0) + tcv
+        identifier = str(_cell(row, opportunity_id_column) or "").strip()
+        account = str(_cell(row, account_column) or "").strip()
+        description = str(_cell(row, opportunity_column) or "").strip()
+        key = identifier or f"{account}|{description}"
+        item = opportunities.setdefault(key, {"account": account, "description": description, "frontierModel": model, "totalTcv": 0.0, "yearTcv": 0.0})
+        item["totalTcv"] = max(item["totalTcv"], tcv)
+        item["yearTcv"] = max(item["yearTcv"], _to_number(_cell(row, year_column)))
+
+    top_models = sorted(model_totals.items(), key=lambda item: item[1], reverse=True)[:3]
+    top_total = sum(total for _model, total in top_models)
+    return (
+        [{"name": model, "totalTcv": total, "percent": total / top_total * 100 if top_total else 0} for model, total in top_models],
+        sorted(opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
+    )
+
+
 def _refresh_quality_pipeline_uploads() -> None:
     """Rebuild saved Quality Pipeline subsets without replacing full history."""
     for insurance in (False, True):
@@ -231,6 +292,7 @@ def _quality_pipeline_payload(
     rows: list[list],
     source_filename: str | None,
     total_rows: list[list] | None = None,
+    frontier_upload: dict | None = None,
 ) -> dict:
     if not rows:
         return {"available": False, "rows": [], "offerings": [], "campaigns": [], "opportunities": [], "campaignOpportunities": [], "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": 0}}
@@ -304,6 +366,7 @@ def _quality_pipeline_payload(
 
     top_offerings = top_categories(offering_totals)
     top_campaigns = top_categories(campaign_totals)
+    frontier_models, frontier_model_opportunities = _frontier_model_quality_data(frontier_upload or {})
     selected_offerings = {item["name"] for item in top_offerings}
     selected_campaigns = {item["name"] for item in top_campaigns}
     opportunities: dict[str, dict] = {}
@@ -332,8 +395,10 @@ def _quality_pipeline_payload(
         "rows": [{"label": label, **values} for label, values in totals.items()],
         "offerings": top_offerings,
         "campaigns": top_campaigns,
+        "frontierModels": frontier_models,
         "opportunities": sorted(opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
         "campaignOpportunities": sorted(campaign_opportunities.values(), key=lambda item: item["totalTcv"], reverse=True)[:6],
+        "frontierModelOpportunities": frontier_model_opportunities,
         "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": len(rows), "summaryRowsSaved": len(total_rows) if total_rows is not None else len(rows), "displayRows": len(display_rows), "sourceFilename": source_filename},
     }
 
@@ -668,7 +733,8 @@ async def quality_pipeline_summary() -> dict:
         await asyncio.to_thread(_refresh_quality_pipeline_uploads)
         headers, rows, source_filename = await asyncio.to_thread(load_quality_pipeline_upload)
         _full_headers, full_rows, _full_source_filename = await asyncio.to_thread(load_pipeline_upload)
-        return await asyncio.to_thread(_quality_pipeline_payload, headers, rows, source_filename, full_rows)
+        frontier_upload = await asyncio.to_thread(load_frontier_models_upload)
+        return await asyncio.to_thread(_quality_pipeline_payload, headers, rows, source_filename, full_rows, frontier_upload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1190,6 +1256,48 @@ async def current_frontier_security_defense_workbook() -> dict:
     return await asyncio.to_thread(load_frontier_security_defense_upload)
 
 
+@app.post("/api/reports/frontier-models/upload", tags=["Reports"])
+async def upload_frontier_models_workbook(workbook: UploadFile = File(...)) -> dict:
+    try:
+        source_filename = workbook.filename or ""
+        parsed = await asyncio.to_thread(parse_frontier_models_workbook, await workbook.read(), source_filename)
+        rows_saved = await asyncio.to_thread(replace_frontier_models_upload, parsed["headers"], parsed["rows"], source_filename)
+        return {
+            "available": rows_saved > 0,
+            "sourceFilename": source_filename,
+            "database": {"table": "frontier_models_upload", "rowsSaved": rows_saved, "sourceFilename": source_filename},
+            **parsed,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/frontier-models/current", tags=["Reports"])
+async def current_frontier_models_workbook() -> dict:
+    return await asyncio.to_thread(load_frontier_models_upload)
+
+
+@app.post("/api/reports/erosion/upload", tags=["Reports"])
+async def upload_erosion_workbook(workbook: UploadFile = File(...)) -> dict:
+    try:
+        source_filename = workbook.filename or ""
+        parsed = await asyncio.to_thread(parse_erosion_workbook, await workbook.read(), source_filename)
+        rows_saved = await asyncio.to_thread(replace_erosion_upload, parsed["headers"], parsed["rows"], source_filename)
+        return {
+            "available": rows_saved > 0,
+            "sourceFilename": source_filename,
+            "database": {"table": "erosion_upload", "rowsSaved": rows_saved, "sourceFilename": source_filename},
+            **parsed,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/erosion/current", tags=["Reports"])
+async def current_erosion_workbook() -> dict:
+    return await asyncio.to_thread(load_erosion_upload)
+
+
 @app.post("/api/reports/workable-demand/upload", tags=["Reports"])
 async def upload_workable_demand_workbook(workbook: UploadFile = File(...)) -> dict:
     try:
@@ -1225,34 +1333,112 @@ async def current_workable_demand_workbook() -> dict:
 
 @app.get("/api/bcmi-orig/ra-summary", tags=["Reports"])
 async def bcmi_orig_ra_summary() -> dict:
-    ra_upload = await asyncio.to_thread(load_ra_upload)
-    if not ra_upload.get("available"):
+    """Use BCM and INS 2 SL_Forecast-2026 adjustment rows as RA values."""
+    headers, rows, source_filename = await asyncio.to_thread(load_revenue_forecast)
+    if not rows:
         return {"available": False, "metrics": {}}
 
-    sheets = {sheet.get("sheetName"): sheet for sheet in ra_upload.get("sheets", [])}
-    q3_sheet = sheets.get("Q3 BU RA - Americas")
-    q4_sheet = sheets.get("Q4 RA - Americas")
-    if not q3_sheet or not q4_sheet:
-        raise HTTPException(status_code=400, detail="The saved RA upload must contain the Q3 and Q4 Americas sheets.")
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    sls_column = _get_column(col_map, "SLS")
+    slsm_column = _get_column(col_map, "SLSM")
+    period_columns = {
+        "aug": _get_column(col_map, "Serviceline_Aug 2026", "SL_Aug'26"),
+        "q3": _get_column(col_map, "Q3'26 (SL)", "Q3 26 (SL)", "SL_Q3'26"),
+        "q4": _get_column(col_map, "Q4'26 (SL)", "Q4 26 (SL)", "SL_Q4'26"),
+        "year": _get_column(col_map, "FY 26 (SL)", "FY26 (SL)", "SL_FY'26"),
+    }
+    missing = [name for name, index in {"SLS": sls_column, "SLSM": slsm_column, **period_columns}.items() if index is None]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing)}")
 
-    def amount(sheet: dict, header_fragment: str) -> float:
-        headers = sheet.get("headers", [])
-        index = next((position for position, header in enumerate(headers) if header_fragment.lower() in str(header).lower()), None)
-        if index is None:
-            raise HTTPException(status_code=400, detail=f'Missing "{header_fragment}" column in {sheet.get("sheetName")}.')
-        return sum(_to_number(row[index] if index < len(row) else 0) for row in sheet.get("rows", []))
+    totals = {period: 0.0 for period in period_columns}
+    for row in rows:
+        sls = str(row[sls_column] if sls_column < len(row) else "").strip().casefold()
+        slsm = str(row[slsm_column] if slsm_column < len(row) else "").strip().casefold()
+        if sls != "adjustments" or slsm != "adjustments":
+            continue
+        for period, index in period_columns.items():
+            totals[period] += _to_number(row[index] if index is not None and index < len(row) else 0)
 
-    def month_amount(sheet: dict, month: str) -> float:
-        indexes = [index for index, header in enumerate(sheet.get("headers", [])) if month in str(header)]
-        return sum(_to_number(row[index] if index < len(row) else 0) for row in sheet.get("rows", []) for index in indexes)
-
-    q3 = amount(q3_sheet, "Q3'26 Revenue")
-    q4 = amount(q4_sheet, "Q4'26 Revenue")
-    aug = month_amount(q3_sheet, "2026-08-01")
     return {
         "available": True,
-        "metrics": {"aug": aug, "q3": q3, "q4": q4, "year": q3 + q4},
-        "sourceFilename": ra_upload.get("sourceFilename"),
+        "metrics": totals,
+        "sourceFilename": source_filename,
+        "filter": {"SLS": "Adjustments", "SLSM": "Adjustments"},
+    }
+
+
+@app.get("/api/bcmi-orig/erosion", tags=["Reports"])
+async def bcmi_orig_erosion() -> dict:
+    """Return the saved Erosion workbook as BCMI - Orig table rows."""
+    upload = await asyncio.to_thread(load_erosion_upload)
+    if not upload.get("available"):
+        return {"available": False, "rows": [], "total": 0, "sourceFilename": None}
+
+    headers = upload.get("headers", [])
+    rows = upload.get("rows", [])
+    # Workbooks uploaded before the header-row fix may have a title row stored
+    # as generic columns followed by the actual Account/Q3/Q4 header row.
+    if rows and not any(str(header).strip().casefold() == "account" for header in headers):
+        candidate_headers = rows[0]
+        if any(str(value or "").strip().casefold() == "account" for value in candidate_headers):
+            headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(candidate_headers)]
+            rows = rows[1:]
+    col_map = {header: index for index, header in enumerate(headers) if header}
+    account_column = _get_column(
+        col_map,
+        "Parent Account Name",
+        "Financial Ultimate Parent Account",
+        "Account Name",
+        "Account",
+    )
+    description_column = _get_column(col_map, "Description", "Project Description", "Opportunity Name", "Erosion Description", "Details")
+    amount_columns = [
+        index
+        for index, header in enumerate(headers)
+        if "erosion" in str(header).casefold() or "amount" in str(header).casefold()
+    ]
+    if not amount_columns:
+        amount_columns = [
+            index
+            for index, header in enumerate(headers)
+            if str(header).strip().casefold() in {"q3", "q4", "q3'26", "q4'26"}
+        ]
+    if account_column is None or not amount_columns:
+        raise HTTPException(status_code=400, detail="The Erosion workbook needs an Account column plus an Erosion, Amount, Q3, or Q4 column.")
+
+    def amount(value: object) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value or "").replace("$", "").replace(",", "").strip().casefold()
+        multiplier = 1.0
+        if text.endswith("k"):
+            multiplier = 1_000.0
+            text = text[:-1]
+        elif text.endswith("m"):
+            multiplier = 1_000_000.0
+            text = text[:-1]
+        try:
+            return float(text or 0) * multiplier
+        except ValueError:
+            return 0.0
+
+    erosion_rows = [
+        {
+            "account": str(row[account_column] if account_column < len(row) else "").strip(),
+            "description": str(row[description_column] if description_column is not None and description_column < len(row) else "").strip(),
+            "amount": sum(amount(row[index] if index < len(row) else 0) for index in amount_columns),
+        }
+        for row in rows
+        if str(row[account_column] if account_column < len(row) else "").strip()
+    ]
+    erosion_rows.sort(key=lambda row: abs(row["amount"]), reverse=True)
+    return {
+        "available": bool(erosion_rows),
+        "rows": erosion_rows[:5],
+        "total": sum(row["amount"] for row in erosion_rows),
+        "sourceFilename": upload.get("sourceFilename"),
+        "rowsSaved": upload.get("rowsSaved", 0),
     }
 
 

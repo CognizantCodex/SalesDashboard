@@ -1264,6 +1264,83 @@ def parse_frontier_security_defense_workbook(file_bytes: bytes, filename: str) -
     return {"sheetName": FRONTIER_SECURITY_DEFENSE_SHEET, "headers": headers, "rows": rows, "rowsSaved": len(rows)}
 
 
+def parse_frontier_models_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
+    """Read a Frontier Models mapping workbook without coupling it to opportunity uploads."""
+    sheet_names = _workbook_sheet_names(file_bytes, filename)
+    preferred_sheet_names = [name for name in sheet_names if str(name).strip().casefold() == "base"]
+    ordered_sheet_names = preferred_sheet_names + [name for name in sheet_names if name not in preferred_sheet_names]
+    candidates: list[tuple[str, list[list[Any]], int]] = []
+    for sheet_name in ordered_sheet_names:
+        values = _read_sheet(file_bytes, filename, sheet_name)
+        for index, row in enumerate(values):
+            populated = sum(value not in (None, "") for value in row)
+            if populated:
+                candidates.append((sheet_name, values, index))
+                break
+    if not candidates:
+        raise ValueError("The Frontier Models workbook does not contain any data.")
+
+    sheet_name, values, fallback_header_index = next(
+        (
+            candidate
+            for candidate in candidates
+            if any(
+                any("frontier model" in str(value or "").strip().lower() for value in row)
+                for row in candidate[1]
+            )
+        ),
+        candidates[0],
+    )
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(values)
+            if any("frontier model" in str(value or "").strip().lower() for value in row)
+        ),
+        fallback_header_index,
+    )
+    headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(values[header_index])]
+    rows = [
+        [_ra_serializable_cell(_cell(row, index)) for index in range(len(headers))]
+        for row in values[header_index + 1 :]
+        if any(_cell(row, index) not in (None, "") for index in range(len(headers)))
+    ]
+    if not rows:
+        raise ValueError("The Frontier Models workbook does not contain any data rows below its header.")
+    return {"sheetName": sheet_name, "headers": headers, "rows": rows, "rowsSaved": len(rows)}
+
+
+def parse_erosion_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
+    """Read the first populated sheet of an Erosion report workbook."""
+    sheet_names = _workbook_sheet_names(file_bytes, filename)
+    for sheet_name in sheet_names:
+        values = _read_sheet(file_bytes, filename, sheet_name)
+        header_index = next(
+            (
+                index
+                for index, row in enumerate(values)
+                if any(str(value or "").strip().casefold() == "account" for value in row)
+            ),
+            None,
+        )
+        if header_index is None:
+            header_index = next(
+                (index for index, row in enumerate(values) if any(value not in (None, "") for value in row)),
+                None,
+            )
+        if header_index is None:
+            continue
+        headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(values[header_index])]
+        rows = [
+            [_ra_serializable_cell(_cell(row, index)) for index in range(len(headers))]
+            for row in values[header_index + 1 :]
+            if any(_cell(row, index) not in (None, "") for index in range(len(headers)))
+        ]
+        if rows:
+            return {"sheetName": sheet_name, "headers": headers, "rows": rows, "rowsSaved": len(rows)}
+    raise ValueError("The Erosion workbook does not contain any data rows.")
+
+
 def _ra_serializable_cell(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
@@ -1300,6 +1377,20 @@ def _read_sheet(file_bytes: bytes, filename: str, sheet_name: str) -> list[list[
         return _read_xlsb(file_bytes, sheet_name)
     if extension in {".xlsx", ".xlsm", ""}:
         return _read_xlsx(file_bytes, sheet_name)
+    raise ValueError("Unsupported workbook type. Upload .xlsx, .xlsm, or .xlsb.")
+
+
+def _workbook_sheet_names(file_bytes: bytes, filename: str) -> list[str]:
+    extension = Path(filename or "").suffix.lower()
+    if extension == ".xlsb":
+        try:
+            with ZipFile(io.BytesIO(file_bytes), "r") as archive:
+                with XlsbWorkbook(fp=archive) as workbook:
+                    return list(workbook.sheets)
+        except (BadZipFile, OSError) as exc:
+            raise ValueError(f"Unable to read .xlsb workbook: {exc}") from exc
+    if extension in {".xlsx", ".xlsm", ""}:
+        return list(load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True).sheetnames)
     raise ValueError("Unsupported workbook type. Upload .xlsx, .xlsm, or .xlsb.")
 
 

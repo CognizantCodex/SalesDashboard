@@ -218,6 +218,32 @@ def test_frontier_security_defense_storage_round_trip(tmp_path, monkeypatch):
     assert saved["rows"] == payload["rows"]
 
 
+def test_frontier_models_upload_replaces_only_its_own_saved_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "sales_dashboard.db")
+    database.replace_frontier_models_upload(["Opportunity", "Frontier Model"], [["OP-1", "Model A"]], "first.xlsb")
+    database.replace_frontier_models_upload(["Opportunity", "Frontier Model"], [["OP-2", "Model B"], ["OP-3", "Model C"]], "latest.xlsb")
+
+    saved = database.load_frontier_models_upload()
+
+    assert saved["table"] == "frontier_models_upload"
+    assert saved["sourceFilename"] == "latest.xlsb"
+    assert saved["rowsSaved"] == 2
+    assert saved["rows"] == [["OP-2", "Model B"], ["OP-3", "Model C"]]
+
+
+def test_erosion_upload_replaces_only_its_own_saved_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "sales_dashboard.db")
+    database.replace_erosion_upload(["Account", "Erosion"], [["Account A", 10]], "first.xlsx")
+    database.replace_erosion_upload(["Account", "Erosion"], [["Account B", 20]], "latest.xlsx")
+
+    saved = database.load_erosion_upload()
+
+    assert saved["table"] == "erosion_upload"
+    assert saved["sourceFilename"] == "latest.xlsx"
+    assert saved["rowsSaved"] == 1
+    assert saved["rows"] == [["Account B", "20"]]
+
+
 def test_workable_demand_upload_replaces_saved_base_sheet(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "dashboard.db")
     first_rows = [["SO-1", "Yes"]]
@@ -290,6 +316,57 @@ def test_bcmi_orig_top_opportunities_combines_pipeline_rows_and_excludes_renewal
     assert [item["description"] for item in payload["periods"]["aug"]["rows"]] == ["Opportunity A"]
     assert [item["description"] for item in payload["periods"]["q3"]["rows"]] == ["Opportunity A", "Opportunity B"]
     assert [item["description"] for item in payload["periods"]["q4"]["rows"]] == ["Opportunity C"]
+
+
+def test_bcmi_orig_ra_summary_uses_forecast_adjustments_for_both_sls_fields(monkeypatch):
+    headers = ["SLS", "SLSM", "Serviceline_Aug 2026", "Q3'26 (SL)", "Q4'26 (SL)", "FY 26 (SL)"]
+    rows = [
+        ["Adjustments", "Adjustments", 100, 200, 300, 500],
+        ["Adjustments", "Other", 999, 999, 999, 999],
+        ["Other", "Adjustments", 999, 999, 999, 999],
+    ]
+    monkeypatch.setattr(main, "load_revenue_forecast", lambda: (headers, rows, "BCM + INS2.xlsx"))
+
+    payload = client.get("/api/bcmi-orig/ra-summary")
+
+    assert payload.status_code == 200
+    assert payload.json()["metrics"] == {"aug": 100.0, "q3": 200.0, "q4": 300.0, "year": 500.0}
+    assert payload.json()["filter"] == {"SLS": "Adjustments", "SLSM": "Adjustments"}
+
+
+def test_bcmi_orig_erosion_maps_and_sorts_saved_erosion_rows(monkeypatch):
+    monkeypatch.setattr(main, "load_erosion_upload", lambda: {
+        "available": True,
+        "sourceFilename": "erosion.xlsx",
+        "rowsSaved": 3,
+        "headers": ["Account Name", "Description", "Erosion Amount"],
+        "rows": [["Account A", "Small", "100"], ["Account B", "Largest", "-500"], ["Account C", "Medium", "250"]],
+    })
+
+    payload = client.get("/api/bcmi-orig/erosion")
+
+    assert payload.status_code == 200
+    assert [row["account"] for row in payload.json()["rows"]] == ["Account B", "Account C", "Account A"]
+    assert payload.json()["total"] == -150
+
+
+def test_bcmi_orig_erosion_uses_embedded_headers_and_sums_quarterly_amounts(monkeypatch):
+    monkeypatch.setattr(main, "load_erosion_upload", lambda: {
+        "available": True,
+        "sourceFilename": "erosion.xlsx",
+        "rowsSaved": 3,
+        "headers": ["Column 1", "Column 2", "Column 3", "Column 4", "Column 5", "Column 6", "Column 7", "Column 8"],
+        "rows": [
+            ["Account", "SLSM", "SLS", "PDL", "EDL", "Project Description", "Q3", "Q4"],
+            ["The Hartford", "Venki", "Shyam", "Bala", "Bala", "Invest", "$40K", "$140K"],
+        ],
+    })
+
+    payload = client.get("/api/bcmi-orig/erosion")
+
+    assert payload.status_code == 200
+    assert payload.json()["rows"] == [{"account": "The Hartford", "description": "Invest", "amount": 180000.0}]
+    assert payload.json()["total"] == 180000.0
 
 
 def test_metadata_endpoints_and_slsm_fallbacks(monkeypatch):

@@ -13,6 +13,14 @@ export default function ReportGeneration() {
   const [frontierSourceFilename, setFrontierSourceFilename] = useState('');
   const [frontierRowsSaved, setFrontierRowsSaved] = useState(0);
   const [isUploadingFrontier, setIsUploadingFrontier] = useState(false);
+  const [frontierModelsAvailable, setFrontierModelsAvailable] = useState(false);
+  const [frontierModelsSourceFilename, setFrontierModelsSourceFilename] = useState('');
+  const [frontierModelsRowsSaved, setFrontierModelsRowsSaved] = useState(0);
+  const [isUploadingFrontierModels, setIsUploadingFrontierModels] = useState(false);
+  const [erosionAvailable, setErosionAvailable] = useState(false);
+  const [erosionSourceFilename, setErosionSourceFilename] = useState('');
+  const [erosionRowsSaved, setErosionRowsSaved] = useState(0);
+  const [isUploadingErosion, setIsUploadingErosion] = useState(false);
   const [workableDemandAvailable, setWorkableDemandAvailable] = useState(false);
   const [workableDemandSourceFilename, setWorkableDemandSourceFilename] = useState('');
   const [workableDemandRowsSaved, setWorkableDemandRowsSaved] = useState(0);
@@ -26,8 +34,10 @@ export default function ReportGeneration() {
       fetch(apiUrl('/api/demand-creation/current')).then((response) => response.ok ? response.json() : null),
       fetch(apiUrl('/api/reports/ra/current')).then((response) => response.ok ? response.json() : null),
       fetch(apiUrl('/api/reports/frontier-security-defense/current')).then((response) => response.ok ? response.json() : null),
+      fetch(apiUrl('/api/reports/frontier-models/current')).then((response) => response.ok ? response.json() : null),
+      fetch(apiUrl('/api/reports/erosion/current')).then((response) => response.ok ? response.json() : null),
       fetch(apiUrl('/api/reports/workable-demand/current')).then((response) => response.ok ? response.json() : null)
-    ]).then(([demand, ra, frontier, workableDemand]) => {
+    ]).then(([demand, ra, frontier, frontierModels, erosion, workableDemand]) => {
       setAvailable(Boolean(demand?.available));
       setSourceFilename(demand?.sourceFilename || '');
       setRaAvailable(Boolean(ra?.available));
@@ -36,6 +46,12 @@ export default function ReportGeneration() {
       setFrontierAvailable(Boolean(frontier?.available));
       setFrontierSourceFilename(frontier?.sourceFilename || '');
       setFrontierRowsSaved(frontier?.rowsSaved || 0);
+      setFrontierModelsAvailable(Boolean(frontierModels?.available));
+      setFrontierModelsSourceFilename(frontierModels?.sourceFilename || '');
+      setFrontierModelsRowsSaved(frontierModels?.rowsSaved || 0);
+      setErosionAvailable(Boolean(erosion?.available));
+      setErosionSourceFilename(erosion?.sourceFilename || '');
+      setErosionRowsSaved(erosion?.rowsSaved || 0);
       setWorkableDemandAvailable(Boolean(workableDemand?.available));
       setWorkableDemandSourceFilename(workableDemand?.sourceFilename || '');
       setWorkableDemandRowsSaved(workableDemand?.rowsSaved || 0);
@@ -82,6 +98,50 @@ export default function ReportGeneration() {
       setError(uploadError.message);
     } finally {
       setIsUploadingFrontier(false);
+      event.target.value = '';
+    }
+  }
+
+  async function uploadFrontierModelsWorkbook(event) {
+    const workbook = event.target.files?.[0];
+    if (!workbook) return;
+    setError('');
+    setIsUploadingFrontierModels(true);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', workbook);
+      const response = await fetch(apiUrl('/api/reports/frontier-models/upload'), { method: 'POST', body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Unable to upload the Frontier Models workbook.');
+      setFrontierModelsAvailable(Boolean(payload.available));
+      setFrontierModelsSourceFilename(payload.sourceFilename || workbook.name);
+      setFrontierModelsRowsSaved(payload.database?.rowsSaved || 0);
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setIsUploadingFrontierModels(false);
+      event.target.value = '';
+    }
+  }
+
+  async function uploadErosionWorkbook(event) {
+    const workbook = event.target.files?.[0];
+    if (!workbook) return;
+    setError('');
+    setIsUploadingErosion(true);
+    try {
+      const formData = new FormData();
+      formData.append('workbook', workbook);
+      const response = await fetch(apiUrl('/api/reports/erosion/upload'), { method: 'POST', body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Unable to upload the Erosion workbook.');
+      setErosionAvailable(Boolean(payload.available));
+      setErosionSourceFilename(payload.sourceFilename || workbook.name);
+      setErosionRowsSaved(payload.database?.rowsSaved || 0);
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setIsUploadingErosion(false);
       event.target.value = '';
     }
   }
@@ -161,6 +221,14 @@ export default function ReportGeneration() {
         <section className="report-action-card report-ra-upload-card">
           <div><h2>Frontier Security &amp; Defense Opportunities</h2><p>{frontierAvailable ? `${frontierSourceFilename || 'Opportunity workbook'} saved with ${frontierRowsSaved.toLocaleString()} opportunity rows.` : 'Upload the Opportunity Input sheet to save Frontier Security & Defense opportunities.'}</p></div>
           <label className="report-download-button report-upload-button">{isUploadingFrontier ? 'Uploading opportunities…' : 'Upload Opportunities'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadFrontierWorkbook} disabled={isUploadingFrontier} /></label>
+        </section>
+        <section className="report-action-card report-ra-upload-card">
+          <div><h2>Frontier Models</h2><p>{frontierModelsAvailable ? `${frontierModelsSourceFilename || 'Frontier Models workbook'} saved with ${frontierModelsRowsSaved.toLocaleString()} rows. Uploading a new workbook replaces this saved mapping.` : 'Upload the Frontier Models mapping workbook. A new upload replaces the previous mapping.'}</p></div>
+          <label className="report-download-button report-upload-button">{isUploadingFrontierModels ? 'Uploading Frontier Models…' : 'Upload Frontier Models'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadFrontierModelsWorkbook} disabled={isUploadingFrontierModels} /></label>
+        </section>
+        <section className="report-action-card report-ra-upload-card">
+          <div><h2>Erosion</h2><p>{erosionAvailable ? `${erosionSourceFilename || 'Erosion workbook'} saved with ${erosionRowsSaved.toLocaleString()} rows. Uploading a new workbook replaces this saved Erosion data.` : 'Upload the Erosion workbook. A new upload replaces the previous Erosion data.'}</p></div>
+          <label className="report-download-button report-upload-button">{isUploadingErosion ? 'Uploading Erosion…' : 'Upload Erosion'}<input type="file" accept=".xlsx,.xlsm,.xlsb" onChange={uploadErosionWorkbook} disabled={isUploadingErosion} /></label>
         </section>
         <section className="report-action-card report-ra-upload-card">
           <div><h2>Workable Demand Report</h2><p>{workableDemandAvailable ? `${workableDemandSourceFilename || 'Workable Demand workbook'} saved with ${workableDemandRowsSaved.toLocaleString()} Base-sheet rows. Uploading a new workbook replaces this saved data.` : 'Upload a Workable Demand workbook to save its Base-sheet data. A new upload replaces the previous data.'}</p></div>

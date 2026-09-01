@@ -11,7 +11,6 @@ import SlsmSummary from './slsm_summary.jsx';
 import SlslSummary from './slsl_summary.jsx';
 import UploadTargets from './upload_targets.jsx';
 import DemandCreation from './demand_creation.jsx';
-import BcmiDashboard from './bcmi_dashboard.jsx';
 import BcmiOrig from './bcmi_orig.jsx';
 import QualityPipeline from './quality_pipeline.jsx';
 import ReportGeneration from './report_generation.jsx';
@@ -21,10 +20,12 @@ const NAV_ITEMS = [
   { id: 'slsl', label: 'SLSL' },
   { id: 'slsm', label: 'SLSM' },
   { id: 'sls', label: 'SLS' },
-  { id: 'targets', label: 'Target' },
+  { id: 'targets', label: 'Target' }
+];
+
+const REPORT_NAV_ITEMS = [
   { id: 'demand-creation', label: 'Demand Creation' },
-  { id: 'bcmi', label: 'BCMI' },
-  { id: 'bcmi-orig', label: 'BCM - Orig' },
+  { id: 'bcmi-orig', label: 'BCMI - Orig' },
   { id: 'quality-pipeline', label: 'Quality Pipeline' },
   { id: 'report-generation', label: 'Report Generation' }
 ];
@@ -174,14 +175,6 @@ export default function SalesForecast() {
     return (
       <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
         <DemandCreation />
-      </DashboardShell>
-    );
-  }
-
-  if (activeDashboard === 'bcmi') {
-    return (
-      <DashboardShell activeDashboard={activeDashboard} onDashboardChange={handleDashboardChange}>
-        <BcmiDashboard />
       </DashboardShell>
     );
   }
@@ -343,6 +336,13 @@ export default function SalesForecast() {
 }
 
 function DashboardShell({ activeDashboard, onDashboardChange, children }) {
+  const hasActiveReport = REPORT_NAV_ITEMS.some((item) => item.id === activeDashboard);
+  const [isReportsMenuOpen, setIsReportsMenuOpen] = useState(hasActiveReport);
+
+  useEffect(() => {
+    if (hasActiveReport) setIsReportsMenuOpen(true);
+  }, [hasActiveReport]);
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Dashboard menu">
@@ -358,6 +358,31 @@ function DashboardShell({ activeDashboard, onDashboardChange, children }) {
               {item.label}
             </button>
           ))}
+          <div className={'side-nav-group' + (hasActiveReport ? ' active' : '')}>
+            <button
+              type="button"
+              className="side-nav-item side-nav-parent"
+              aria-expanded={isReportsMenuOpen}
+              aria-controls="generate-reports-menu"
+              onClick={() => setIsReportsMenuOpen((isOpen) => !isOpen)}
+            >
+              <span>Generate Reports</span><span className="side-nav-chevron" aria-hidden="true">{isReportsMenuOpen ? '⌄' : '›'}</span>
+            </button>
+            {isReportsMenuOpen && (
+              <div id="generate-reports-menu" className="side-nav-submenu">
+                {REPORT_NAV_ITEMS.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={'side-nav-item side-nav-submenu-item' + (activeDashboard === item.id ? ' active' : '')}
+                    onClick={() => onDashboardChange(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
       </aside>
       <div className="app-content">{children}</div>
