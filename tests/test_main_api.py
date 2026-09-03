@@ -352,6 +352,18 @@ def test_ra_achieved_sums_converted_adm_de_and_qea(monkeypatch):
     assert payload.json()["filter"] == "Subtotal: AB:AJ"
 
 
+def test_ra_upload_replaces_the_existing_workbook(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "dashboard.db")
+
+    database.replace_ra_upload("first.xlsx", {"sheets": [{"sheetName": "Q3", "rows": [[1]]}], "rowsSaved": 1})
+    database.replace_ra_upload("second.xlsx", {"sheets": [{"sheetName": "Q4", "rows": [[2], [3]]}], "rowsSaved": 2})
+
+    saved = database.load_ra_upload()
+    assert saved["sourceFilename"] == "second.xlsx"
+    assert saved["rowsSaved"] == 2
+    assert saved["sheets"] == [{"sheetName": "Q4", "rows": [[2], [3]]}]
+
+
 def test_ra_achieved_uses_converted_detail_rows_for_existing_uploads(monkeypatch):
     monkeypatch.setattr(
         main,
