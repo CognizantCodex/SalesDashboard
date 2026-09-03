@@ -113,8 +113,7 @@ function SkillLocationTable({ data }) {
 }
 
 function DemandProfileTable({ data }) {
-  const months = data?.months || [];
-  const quarters = data?.quarters || [];
+  const columns = data?.columns || [...(data?.months || []), ...(data?.quarters || [])];
   const rows = data?.rows || [];
   if (!rows.length) return null;
 
@@ -122,16 +121,15 @@ function DemandProfileTable({ data }) {
     <section className="demand-profile-card" aria-label="Demand profile">
       <h2>Demand Profile</h2>
       <table className="demand-profile-table">
-        <thead><tr><th>BU</th><th>Total</th>{months.map((month) => <th key={month.key}>{month.label}</th>)}{quarters.map((quarter) => <th key={quarter.key}>{quarter.label}</th>)}</tr></thead>
-        <tbody>{rows.map((row) => <tr key={row.name}><th scope="row">{row.name}</th><td>{demandLabel(row.total)}</td>{months.map((month) => <td key={month.key}>{demandLabel(row.months?.[month.key])}</td>)}{quarters.map((quarter) => <td key={quarter.key}>{demandLabel(row.quarters?.[quarter.key])}</td>)}</tr>)}</tbody>
+        <thead><tr><th>BU</th><th>Total</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.name}><th scope="row">{row.name}</th><td>{demandLabel(row.total)}</td>{columns.map((column) => <td key={column.key}>{demandLabel(row.periods?.[column.key] ?? row.months?.[column.key] ?? row.quarters?.[column.key])}</td>)}</tr>)}</tbody>
       </table>
     </section>
   );
 }
 
 function TopAccountsTable({ data }) {
-  const months = data?.months || [];
-  const quarters = data?.quarters || [];
+  const columns = data?.columns || [...(data?.months || []), ...(data?.quarters || [])];
   const rows = data?.rows || [];
   if (!rows.length) return null;
 
@@ -144,15 +142,13 @@ function TopAccountsTable({ data }) {
             <col className="top-accounts-serial-column" />
             <col className="top-accounts-name-column" />
             <col className="top-accounts-description-column" />
-            {months.map((month) => <col key={month.key} className="top-accounts-value-column" />)}
-            {quarters.map((quarter) => <col key={quarter.key} className="top-accounts-value-column" />)}
+            {columns.map((column) => <col key={column.key} className="top-accounts-value-column" />)}
             <col className="top-accounts-total-column" />
           </colgroup>
-          <thead><tr><th>S.No</th><th>Account Name</th><th>Description</th>{months.map((month) => <th key={month.key}>{month.label}</th>)}{quarters.map((quarter) => <th key={quarter.key}>{quarter.label}</th>)}<th>Total Demands</th></tr></thead>
+          <thead><tr><th>S.No</th><th>Account Name</th><th>Description</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>Total</th></tr></thead>
           <tbody>{rows.map((row, index) => <tr key={row.account}>
             <td>{index + 1}</td><td>{row.account}</td><td>{row.description}</td>
-            {months.map((month) => <td key={month.key}>{demandLabel(row.months?.[month.key])}</td>)}
-            {quarters.map((quarter) => <td key={quarter.key}>{demandLabel(row.quarters?.[quarter.key])}</td>)}
+            {columns.map((column) => <td key={column.key}>{demandLabel(row.periods?.[column.key] ?? row.months?.[column.key] ?? row.quarters?.[column.key])}</td>)}
             <td>{demandLabel(row.total)}</td>
           </tr>)}</tbody>
         </table>

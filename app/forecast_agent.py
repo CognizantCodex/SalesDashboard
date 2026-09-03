@@ -34,6 +34,7 @@ TARGETS_SHEET = "SLM-SLS-Pivot"
 TARGET_TOTAL_LABEL = "Grand Total"
 DEMAND_CREATION_SHEETS = {"BCM": "BCM", "INS2": "INS2"}
 RA_WORKBOOK_SHEETS = ("Q3 BU RA - Americas", "Q4 RA - Americas")
+Q3_RA_ACHIEVED_COLUMNS = range(27, 36)  # Excel AB through AJ, zero-indexed.
 FRONTIER_SECURITY_DEFENSE_SHEET = "Opportunity Input"
 FRONTIER_SECURITY_DEFENSE_REQUIRED_COLUMNS = (
     "BU *",
@@ -1149,17 +1150,52 @@ def parse_demand_creation_workbook(file_bytes: bytes, filename: str) -> dict[str
     }
 
 
+def _ra_converted_so_far_total(values: list[list[Any]]) -> float | None:
+    """Return the ADM, DE, and QEA total from the sheet's Converted so far row."""
+    for row_index, row in enumerate(values):
+        if not any("converted so far" in str(cell or "").strip().casefold() for cell in row):
+            continue
+
+        # The compact summary at the top of the sheet has its own ADM/DE/QEA
+        # header, separate from the opportunity-detail table below it.
+        for header in reversed(values[max(0, row_index - 10) : row_index]):
+            header_map = {str(cell or "").strip().casefold(): index for index, cell in enumerate(header)}
+            columns = [header_map.get(name) for name in ("adm", "de", "qea")]
+            if all(column is not None for column in columns):
+                return sum(_to_number(_cell(row, column)) for column in columns if column is not None)
+    return None
+
+
+def _q3_ra_achieved_subtotal(values: list[list[Any]]) -> float | None:
+    """Find the Q3 Subtotal row and sum its Excel AB:AJ cells."""
+    for row in values:
+        if not any("subtotal" in str(cell or "").strip().casefold() for cell in row):
+            continue
+        if len(row) > max(Q3_RA_ACHIEVED_COLUMNS):
+            return sum(_to_number(_cell(row, column)) for column in Q3_RA_ACHIEVED_COLUMNS)
+    return None
+
+
 def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
-    """Extract the actionable rows from the two Americas RA workbook sheets."""
+    """Extract and persist the Americas RA Path to Recovery sheets and achieved RA totals."""
     sheets: list[dict[str, Any]] = []
+    converted_so_far: dict[str, float] = {}
     for sheet_name in RA_WORKBOOK_SHEETS:
         values = _read_sheet(file_bytes, filename, sheet_name)
+        if sheet_name.startswith("Q3"):
+            subtotal = _q3_ra_achieved_subtotal(values)
+            if subtotal is not None:
+                converted_so_far["q3"] = subtotal
+        else:
+            converted_total = _ra_converted_so_far_total(values)
+            if converted_total is not None:
+                converted_so_far["q4"] = converted_total
         header_index = next(
             (
                 index
                 for index, row in enumerate(values)
-                if "Account" in {str(cell or "").strip() for cell in row}
-                and "BU" in {str(cell or "").strip() for cell in row}
+                if any(str(cell or "").strip().casefold() in {"account", "account name", "parent customer"} for cell in row)
+                and any(str(cell or "").strip().casefold() in {"bu", "business unit"} for cell in row)
             ),
             None,
         )
@@ -1167,7 +1203,13 @@ def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
             raise ValueError(f'Missing the Account and BU header row in "{sheet_name}".')
 
         headers = [str(value or "").strip() or f"Column {index + 1}" for index, value in enumerate(values[header_index])]
-        account_index = headers.index("Account")
+        account_index = _get_row_header_index(headers, "Account")
+        if account_index is None:
+            account_index = _get_row_header_index(headers, "Account Name")
+        if account_index is None:
+            account_index = _get_row_header_index(headers, "Parent Customer")
+        if account_index is None:
+            raise ValueError(f'Missing an Account column in "{sheet_name}".')
         rows = [
             [_ra_serializable_cell(_cell(row, index)) for index in range(len(headers))]
             for row in values[header_index + 1 :]
@@ -1175,7 +1217,11 @@ def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
         ]
         sheets.append({"sheetName": sheet_name, "headers": headers, "rows": rows, "rowsSaved": len(rows)})
 
-    return {"sheets": sheets, "rowsSaved": sum(sheet["rowsSaved"] for sheet in sheets)}
+    return {
+        "sheets": sheets,
+        "rowsSaved": sum(sheet["rowsSaved"] for sheet in sheets),
+        "convertedSoFar": converted_so_far,
+    }
 
 
 def parse_workable_demand_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:

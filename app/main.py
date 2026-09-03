@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -14,7 +15,7 @@ from uuid import uuid4
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from .database import (
     load_demand_creation_upload,
@@ -100,7 +101,7 @@ app.add_middleware(
 )
 
 
-REPORT_EXPORT_DIR = Path(tempfile.gettempdir()) / "sales-dashboard-reports"
+REPORT_EXPORT_DIR = Path(__file__).resolve().parent / ".report-exports"
 RECENT_PIPELINE_MARKER = "opportunity created in two weeks"
 
 
@@ -172,6 +173,99 @@ def workable_demand_skill_location(headers: list[str], rows: list[list[object]])
             {"skill": skill, "us": values["us"], "india": values["india"]}
             for skill, values in totals.items()
         ],
+    }
+
+
+def workable_demand_creation_payload(headers: list[str], rows: list[list[object]]) -> dict:
+    """Return the Demand Creation page payload from SO Detail by Parent Customer."""
+    col_map = {str(header).strip(): index for index, header in enumerate(headers) if str(header).strip()}
+    submitted_index = _get_column(col_map, "SO Submission Date")
+    bu_index = _get_column(col_map, "BU")
+    account_index = _get_column(col_map, "Parent Customer")
+    project_index = _get_column(col_map, "Project Name")
+    workable_index = _get_column(col_map, "Workable Demand")
+    if None in (submitted_index, bu_index, account_index, workable_index):
+        raise ValueError("The saved SO Detail report is missing required demand columns.")
+
+    selected_bus = {"banking & capital markets - na": "BCM", "insurance 2": "INS2"}
+    report_year = date.today().year
+    q3_start, q3_end = date(report_year, 7, 1), date(report_year, 9, 30)
+    q4_start, q4_end = date(report_year, 10, 1), date(report_year, 12, 31)
+    period_specs = [
+        {"key": "aug", "label": "Aug", "start": date(report_year, 8, 1), "end": date(report_year, 8, 31)},
+        {"key": "sep", "label": "Sep", "start": date(report_year, 9, 1), "end": date(report_year, 9, 30)},
+        {"key": "q3", "label": "Q3 Total", "start": q3_start, "end": q3_end},
+        {"key": "oct", "label": "Oct", "start": date(report_year, 10, 1), "end": date(report_year, 10, 31)},
+        {"key": "nov", "label": "Nov", "start": date(report_year, 11, 1), "end": date(report_year, 11, 30)},
+        {"key": "dec", "label": "Dec", "start": date(report_year, 12, 1), "end": date(report_year, 12, 31)},
+        {"key": "q4", "label": "Q4 Total", "start": q4_start, "end": q4_end},
+    ]
+    current_month_start = date(report_year, date.today().month, 1)
+    previous_month_end = current_month_start - timedelta(days=1)
+    previous_month_start = date(previous_month_end.year, previous_month_end.month, 1)
+    current_month_end = date(report_year + (1 if date.today().month == 12 else 0), 1 if date.today().month == 12 else date.today().month + 1, 1) - timedelta(days=1)
+    weekly: dict[date, dict[str, float]] = defaultdict(lambda: {"BCM": 0.0, "INS2": 0.0})
+    profiles = {name: defaultdict(float) for name in ("BCM", "INS2")}
+    accounts: dict[str, dict] = defaultdict(lambda: {"periods": defaultdict(float), "projects": set()})
+    rows_processed = {"BCM": 0, "INS2": 0}
+
+    for row in rows:
+        bu = selected_bus.get(str(_cell(row, bu_index) or "").strip().casefold())
+        workable = str(_cell(row, workable_index) or "").strip().casefold()
+        submitted_date = _workable_detail_date(_cell(row, submitted_index))
+        if not bu or workable != "yes" or submitted_date is None:
+            continue
+        if previous_month_start <= submitted_date <= current_month_end:
+            week_start = previous_month_start + timedelta(days=((submitted_date - previous_month_start).days // 7) * 7)
+            weekly[week_start][bu] += 1
+        if not q3_start <= submitted_date <= q4_end:
+            continue
+        account_name = str(_cell(row, account_index) or "").strip() or "Unassigned"
+        account = accounts[account_name]
+        project = str(_cell(row, project_index) or "").strip() if project_index is not None else ""
+        if project:
+            account["projects"].add(project)
+        for period in period_specs:
+            if period["start"] <= submitted_date <= period["end"]:
+                profiles[bu][period["key"]] += 1
+                account["periods"][period["key"]] += 1
+        rows_processed[bu] += 1
+
+    first_week = previous_month_start
+    final_week = previous_month_start + timedelta(days=((current_month_end - previous_month_start).days // 7) * 7)
+    ordered_weeks = []
+    week = first_week
+    while week <= final_week:
+        ordered_weeks.append(week)
+        week += timedelta(days=7)
+    top_accounts = []
+    for account_name, account in sorted(accounts.items(), key=lambda item: (-(item[1]["periods"]["q3"] + item[1]["periods"]["q4"]), item[0].casefold()))[:10]:
+        projects = sorted(account["projects"])
+        top_accounts.append({
+            "account": account_name,
+            "description": projects[0] if len(projects) == 1 else (f"{len(projects)} projects" if projects else "—"),
+            "periods": {period["key"]: account["periods"][period["key"]] for period in period_specs},
+            "total": account["periods"]["q3"] + account["periods"]["q4"],
+        })
+    profile_columns = [{"key": period["key"], "label": period["label"]} for period in period_specs]
+    account_columns = [{"key": period["key"], "label": period["label"].replace(" Total", "")} for period in period_specs]
+    return {
+        "available": bool(rows_processed["BCM"] or rows_processed["INS2"]),
+        "series": [{"week": week.isoformat(), "weekLabel": f"{week.strftime('%b')} {week.day}", "BCM": weekly[week]["BCM"], "INS2": weekly[week]["INS2"]} for week in ordered_weeks],
+        "totals": {name: profiles[name]["q3"] + profiles[name]["q4"] for name in ("BCM", "INS2")},
+        "rowsProcessed": rows_processed,
+        "topAccounts": {"columns": account_columns, "rows": top_accounts},
+        "demandProfile": {
+            "columns": profile_columns,
+            "rows": [
+                {
+                    "name": "BCM" if name == "BCM" else "INS 2",
+                    "total": profiles[name]["q3"] + profiles[name]["q4"],
+                    "periods": {period["key"]: profiles[name][period["key"]] for period in period_specs},
+                }
+                for name in ("BCM", "INS2")
+            ],
+        },
     }
 
 
@@ -403,7 +497,8 @@ def _quality_pipeline_payload(
     }
 
 
-def _create_report_presentation(demand: dict) -> Path:
+def _create_report_presentation(report: dict) -> bytes:
+    demand = report.get("demand") or {}
     if not demand.get("available"):
         raise ValueError("Upload a Demand Creation workbook before generating a report.")
 
@@ -411,7 +506,7 @@ def _create_report_presentation(demand: dict) -> Path:
     report_id = uuid4().hex
     input_path = REPORT_EXPORT_DIR / f"{report_id}.json"
     output_path = REPORT_EXPORT_DIR / f"Sales_Dashboard_Report_{report_id}.pptx"
-    input_path.write_text(json.dumps({"demand": demand}), encoding="utf-8")
+    input_path.write_text(json.dumps(report), encoding="utf-8")
     try:
         artifact_tool_root = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/@oai/artifact-tool"
         command_env = os.environ.copy()
@@ -419,7 +514,7 @@ def _create_report_presentation(demand: dict) -> Path:
         completed = subprocess.run(
             [_presentation_node(), str(Path(__file__).with_name("report_presentation.mjs")), str(input_path), str(output_path)],
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
             timeout=90,
             env=command_env,
@@ -427,10 +522,10 @@ def _create_report_presentation(demand: dict) -> Path:
     finally:
         input_path.unlink(missing_ok=True)
 
-    if completed.returncode != 0 or not output_path.exists():
-        detail = (completed.stderr or completed.stdout or "Unable to create PowerPoint report.").strip()
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or b"Unable to create PowerPoint report.").decode("utf-8", errors="replace").strip()
         raise RuntimeError(detail)
-    return output_path
+    return completed.stdout
 
 
 def _money_label(value: float) -> str:
@@ -548,7 +643,7 @@ async def insurance_forecast_upload_metadata() -> dict:
     return {"available": metadata["available"], "database": metadata}
 
 
-@app.get("/api/bcmi-orig/revenue-summary")
+@app.get("/api/bcmi-orig/revenue-summary", tags=["Reports"])
 async def bcmi_orig_revenue_summary() -> dict:
     """Aggregate BCM and Insurance forecasted Net Revenue for BCMI - Orig."""
     headers, rows, source_filename = await asyncio.to_thread(load_revenue_forecast)
@@ -726,7 +821,7 @@ async def pipeline_upload_metadata() -> dict:
     return {"available": metadata["available"], "database": metadata}
 
 
-@app.get("/api/quality-pipeline/summary")
+@app.get("/api/quality-pipeline/summary", tags=["Pipeline"])
 async def quality_pipeline_summary() -> dict:
     """Return the saved two-week BCM and Insurance Quality Pipeline profile."""
     try:
@@ -1210,7 +1305,25 @@ async def upload_demand_creation(workbook: UploadFile = File(...)) -> dict:
 
 @app.get("/api/demand-creation/current", tags=["Demand Creation"])
 async def current_demand_creation() -> dict:
+    workable_upload = await asyncio.to_thread(load_workable_demand_so_detail_upload)
+    if workable_upload.get("available"):
+        try:
+            result = await asyncio.to_thread(workable_demand_creation_payload, workable_upload["headers"], workable_upload["rows"])
+            return {**result, "sourceFilename": workable_upload.get("sourceFilename"), "database": {"table": workable_upload.get("table"), "rowsSaved": workable_upload.get("rowsSaved", 0)}}
+        except ValueError:
+            pass
     return await asyncio.to_thread(load_demand_creation_upload)
+
+
+def _current_demand_creation_payload() -> dict:
+    workable_upload = load_workable_demand_so_detail_upload()
+    if workable_upload.get("available"):
+        try:
+            result = workable_demand_creation_payload(workable_upload["headers"], workable_upload["rows"])
+            return {**result, "sourceFilename": workable_upload.get("sourceFilename"), "database": {"table": workable_upload.get("table"), "rowsSaved": workable_upload.get("rowsSaved", 0)}}
+        except ValueError:
+            pass
+    return load_demand_creation_upload()
 
 
 @app.get("/api/demand-creation/skill-location", tags=["Demand Creation"])
@@ -1365,6 +1478,46 @@ async def bcmi_orig_ra_summary() -> dict:
         "metrics": totals,
         "sourceFilename": source_filename,
         "filter": {"SLS": "Adjustments", "SLSM": "Adjustments"},
+    }
+
+
+@app.get("/api/bcmi-orig/ra-achieved", tags=["Reports"])
+async def bcmi_orig_ra_achieved() -> dict:
+    """Return converted RA achieved from the Q3 and Q4 Americas RA sheets."""
+    upload = await asyncio.to_thread(load_ra_upload)
+    if not upload.get("available"):
+        return {"available": False, "metrics": {}}
+    metrics = upload.get("convertedSoFar") or {}
+    # Historic uploads do not retain the compact Converted so far summary,
+    # but their detailed rows retain the conversion note.  Sum ADM, DE, and
+    # QEA from those converted rows only when the workbook has no stored value
+    # for that period.
+    for sheet in upload.get("sheets") or []:
+        period = "q3" if str(sheet.get("sheetName") or "").startswith("Q3") else "q4"
+        if period in metrics:
+            continue
+        headers = sheet.get("headers") or []
+        rows = sheet.get("rows") or []
+        col_map = {str(header).strip(): index for index, header in enumerate(headers)}
+        amount_columns = [_get_column(col_map, name) for name in ("ADM", "DE", "QEA")]
+        if any(column is None for column in amount_columns):
+            continue
+        converted_rows = [
+            row for row in rows
+            if any("converted" in str(value or "").casefold() for value in row)
+        ]
+        if converted_rows:
+            metrics[period] = sum(
+                _to_number(_cell(row, column))
+                for row in converted_rows
+                for column in amount_columns
+                if column is not None
+            )
+    return {
+        "available": bool(metrics),
+        "metrics": {period: _to_number(metrics.get(period)) for period in ("q3", "q4") if period in metrics},
+        "sourceFilename": upload.get("sourceFilename"),
+        "filter": "Converted so far: ADM + DE + QEA",
     }
 
 
@@ -1558,18 +1711,33 @@ async def bcmi_orig_top_opportunities() -> dict:
 
 
 @app.get("/api/reports/export", tags=["Reports"])
-async def export_dashboard_report() -> FileResponse:
-    demand = await asyncio.to_thread(load_demand_creation_upload)
+async def export_dashboard_report() -> Response:
+    demand = await asyncio.to_thread(_current_demand_creation_payload)
     try:
-        report_path = await asyncio.to_thread(_create_report_presentation, demand)
+        revenue, ra, wins, opportunities, erosion = await asyncio.gather(
+            bcmi_orig_revenue_summary(),
+            bcmi_orig_ra_summary(),
+            bcmi_orig_biweekly_wins(),
+            bcmi_orig_top_opportunities(),
+            bcmi_orig_erosion(),
+        )
+        await asyncio.to_thread(_refresh_quality_pipeline_uploads)
+        quality_headers, quality_rows, quality_source = await asyncio.to_thread(load_quality_pipeline_upload)
+        _all_headers, quality_all_rows, _all_source = await asyncio.to_thread(load_pipeline_upload)
+        frontier_upload = await asyncio.to_thread(load_frontier_models_upload)
+        quality = await asyncio.to_thread(_quality_pipeline_payload, quality_headers, quality_rows, quality_source, quality_all_rows, frontier_upload)
+        report_bytes = await asyncio.to_thread(
+            _create_report_presentation,
+            {"demand": demand, "bcmi": {"revenue": revenue, "ra": ra, "wins": wins, "opportunities": opportunities, "erosion": erosion}, "quality": quality},
+        )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=f"PowerPoint generation failed: {exc}") from exc
-    return FileResponse(
-        report_path,
+    return Response(
+        content=report_bytes,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename="Sales_Dashboard_Report.pptx",
+        headers={"Content-Disposition": 'attachment; filename="Sales_Dashboard_Report.pptx"'},
     )
 
 

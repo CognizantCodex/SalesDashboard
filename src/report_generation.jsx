@@ -204,11 +204,12 @@ export default function ReportGeneration() {
         <section className="report-hero">
           <p className="report-eyebrow">Leadership reporting</p>
           <h2>Generate the executive dashboard report</h2>
-          <p>The exported PowerPoint contains two editable slides: BCMI, followed by Demand Profile &amp; Top Accounts from the most recently saved Demand Creation workbook.</p>
+          <p>The exported PowerPoint contains three editable slides from the current BCMI, Demand Generation, and Quality Pipeline data.</p>
         </section>
         <section className="report-slides" aria-label="Report contents">
           <article><span>01</span><h2>BCMI</h2><p>Commitment, RA, opportunities, key highlights, wins, and revenue erosion tables.</p></article>
-          <article><span>02</span><h2>Demand Profile &amp; Top Accounts</h2><p>Demand Profile, weekly BCM/INS 2 chart, and the saved Top 10 Accounts table.</p></article>
+          <article><span>02</span><h2>Demand Generation</h2><p>Demand Profile, weekly BCM/INS 2 chart, and the saved Top 10 Accounts table.</p></article>
+          <article><span>03</span><h2>Quality of Pipeline</h2><p>Quality summary, pipeline composition, and Top 6 opportunities.</p></article>
         </section>
         <section className="report-action-card">
           <div><h2>Report data status</h2><p>{available ? `Ready to export from ${sourceFilename || 'the saved Demand Creation workbook'}.` : 'Upload a Demand Creation workbook before generating the PowerPoint.'}</p></div>

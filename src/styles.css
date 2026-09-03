@@ -668,7 +668,7 @@ header span {
 
 .demand-profile-table th,
 .demand-profile-table td {
-  padding: 0.7rem 0.35rem;
+  padding: 0.65rem 0.25rem;
   border: 1px solid #d9dee8;
   text-align: center;
   overflow-wrap: anywhere;
@@ -677,8 +677,14 @@ header span {
 .demand-profile-table thead th {
   color: #fff;
   background: #08065c;
-  font-size: 12px;
+  font-size: 11px;
 }
+
+.demand-profile-table th:first-child,
+.demand-profile-table td:first-child { width: 14%; }
+
+.demand-profile-table th:not(:first-child),
+.demand-profile-table td:not(:first-child) { width: 10.75%; }
 
 .demand-profile-table tbody th {
   background: #e8edf8;
@@ -791,7 +797,7 @@ header span {
   text-transform: uppercase;
 }
 
-.top-accounts-scroll { overflow: visible; }
+.top-accounts-scroll { overflow: hidden; }
 
 .top-accounts-table {
   width: 100%;
@@ -799,25 +805,26 @@ header span {
   border-collapse: collapse;
   table-layout: fixed;
   color: #142451;
-  font-size: 13px;
+  font-size: 11px;
 }
 
-.top-accounts-serial-column { width: 48px; }
-.top-accounts-name-column { width: 25%; }
-.top-accounts-description-column { width: 25%; }
-.top-accounts-total-column { width: 112px; }
+.top-accounts-serial-column { width: 6%; }
+.top-accounts-name-column { width: 16%; }
+.top-accounts-description-column { width: 22%; }
+.top-accounts-value-column { width: 7%; }
+.top-accounts-total-column { width: 7%; }
 
 .top-accounts-table th {
-  padding: 0.72rem;
+  padding: 0.58rem 0.2rem;
   color: #fff;
   background: #08065c;
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .top-accounts-table td {
-  padding: 0.68rem 0.72rem;
+  padding: 0.58rem 0.2rem;
   border: 1px solid #d9dee8;
   text-align: center;
   overflow-wrap: anywhere;

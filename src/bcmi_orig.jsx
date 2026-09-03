@@ -28,6 +28,7 @@ function formatForecastRa(value) {
 export default function BcmiOrig() {
   const [revenueSummary, setRevenueSummary] = useState(null);
   const [raSummary, setRaSummary] = useState(null);
+  const [raAchieved, setRaAchieved] = useState(null);
   const [biweeklyWins, setBiweeklyWins] = useState(null);
   const [erosion, setErosion] = useState(null);
   const [topOpportunities, setTopOpportunities] = useState(null);
@@ -37,18 +38,20 @@ export default function BcmiOrig() {
     const controller = new AbortController();
     async function loadRevenueSummary() {
       try {
-        const [revenueResponse, raResponse, winsResponse, opportunitiesResponse, erosionResponse] = await Promise.all([
+        const [revenueResponse, raResponse, achievedResponse, winsResponse, opportunitiesResponse, erosionResponse] = await Promise.all([
           fetch(apiUrl('/api/bcmi-orig/revenue-summary'), { signal: controller.signal }),
           fetch(apiUrl('/api/bcmi-orig/ra-summary'), { signal: controller.signal }),
+          fetch(apiUrl('/api/bcmi-orig/ra-achieved'), { signal: controller.signal }),
           fetch(apiUrl('/api/bcmi-orig/biweekly-wins'), { signal: controller.signal }),
           fetch(apiUrl('/api/bcmi-orig/top-opportunities'), { signal: controller.signal }),
           fetch(apiUrl('/api/bcmi-orig/erosion'), { signal: controller.signal })
         ]);
-        const [revenuePayload, raPayload, winsPayload, opportunitiesPayload, erosionPayload] = await Promise.all([revenueResponse.json(), raResponse.json(), winsResponse.json(), opportunitiesResponse.json(), erosionResponse.json()]);
+        const [revenuePayload, raPayload, achievedPayload, winsPayload, opportunitiesPayload, erosionPayload] = await Promise.all([revenueResponse.json(), raResponse.json(), achievedResponse.json(), winsResponse.json(), opportunitiesResponse.json(), erosionResponse.json()]);
         if (!revenueResponse.ok) throw new Error(revenuePayload.detail || 'Unable to load the revenue summary.');
         if (!controller.signal.aborted) {
           setRevenueSummary(revenuePayload.available ? revenuePayload.metrics : null);
           setRaSummary(raResponse.ok && raPayload.available ? raPayload.metrics : null);
+          setRaAchieved(achievedResponse.ok && achievedPayload.available ? achievedPayload.metrics : null);
           setBiweeklyWins(winsResponse.ok && winsPayload.available ? winsPayload : null);
           setTopOpportunities(opportunitiesResponse.ok && opportunitiesPayload.available ? opportunitiesPayload.periods : null);
           setErosion(erosionResponse.ok && erosionPayload.available ? erosionPayload : null);
@@ -57,6 +60,7 @@ export default function BcmiOrig() {
         if (!controller.signal.aborted) {
           setRevenueSummary(null);
           setRaSummary(null);
+          setRaAchieved(null);
           setBiweeklyWins(null);
           setTopOpportunities(null);
           setErosion(null);
@@ -72,5 +76,5 @@ export default function BcmiOrig() {
   const revenuePeriods = { Aug: 'aug', Q3: 'q3', Q4: 'q4', Year: 'year' };
   const winRows = (biweeklyWins?.rows || []).map((row) => ({ ...row, netTcv: formatRa(row.netTcv), cyRevenue: formatRa(row.cyRevenue) }));
   const erosionRows = (erosion?.rows || []).map((row) => ({ account: row.account, description: row.description, netTcv: formatRa(row.amount) }));
-  return <><header><svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" /></svg><h1>BCM - Orig</h1></header><main className="container bcmi-page bcmi-orig-page"><h2 className="bcmi-orig-wordmark">BCMI</h2>{isLoadingRevenue ? <LoadingSpinner label="Loading BCM, Insurance, and RA data…" /> : <section className="bcmi-orig-grid"><div className="bcmi-orig-left"><table className="bcmi-orig-commit"><thead><tr><th rowSpan="2">Commit</th><th colSpan="4">RA</th></tr><tr><th>Revenue</th><th>RA</th><th>RA Achieved</th><th className="bcmi-orig-gap">GAP</th></tr></thead><tbody>{Object.entries(revenuePeriods).map(([label, period]) => <tr key={label}><th>{label}</th><td>{revenueSummary ? formatRevenue(revenueSummary[period]) : '—'}</td><td>{raSummary ? formatForecastRa(raSummary[period]) : '—'}</td><td /><td /></tr>)}</tbody></table><section className="bcmi-orig-periods">{periods.map((period) => <OpportunityPanel key={period} period={period} opportunities={topOpportunities?.[period.toLowerCase()]} />)}</section></div><aside className="bcmi-orig-right"><h2>Key Highlights</h2><div className="bcmi-orig-spacer" /><CompactTable title="Wins" amount={biweeklyWins?.latestWeek ? `Week ${biweeklyWins.latestWeek}` : '—'} headers={['S.No.', 'Account', 'Description', 'Total TCV', '2026-TCV']} rows={winRows.length ? winRows : [1, 2, 3, 4, 5]} /><CompactTable title="Revenue Erosion" amount={erosion ? formatRa(erosion.total) : '—'} headers={['S.No.', 'Account', 'Description', 'Amount']} rows={erosionRows.length ? erosionRows : [1, 2, 3, 4, 5]} /></aside></section>}</main></>;
+  return <><header><svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5m0 14h16M8 17V9m4 8V7m4 10v-5m4 5V4" /></svg><h1>BCM - Orig</h1></header><main className="container bcmi-page bcmi-orig-page"><h2 className="bcmi-orig-wordmark">BCMI</h2>{isLoadingRevenue ? <LoadingSpinner label="Loading BCM, Insurance, and RA data…" /> : <section className="bcmi-orig-grid"><div className="bcmi-orig-left"><table className="bcmi-orig-commit"><thead><tr><th rowSpan="2">Commit</th><th colSpan="4">RA</th></tr><tr><th>Revenue</th><th>RA</th><th>RA Achieved</th><th className="bcmi-orig-gap">GAP</th></tr></thead><tbody>{Object.entries(revenuePeriods).map(([label, period]) => <tr key={label}><th>{label}</th><td>{revenueSummary ? formatRevenue(revenueSummary[period]) : '—'}</td><td>{raSummary ? formatForecastRa(raSummary[period]) : '—'}</td><td>{raAchieved?.[period] != null ? formatRa(raAchieved[period]) : '—'}</td><td /></tr>)}</tbody></table><section className="bcmi-orig-periods">{periods.map((period) => <OpportunityPanel key={period} period={period} opportunities={topOpportunities?.[period.toLowerCase()]} />)}</section></div><aside className="bcmi-orig-right"><h2>Key Highlights</h2><div className="bcmi-orig-spacer" /><CompactTable title="Wins" amount={biweeklyWins?.latestWeek ? `Week ${biweeklyWins.latestWeek}` : '—'} headers={['S.No.', 'Account', 'Description', 'Total TCV', '2026-TCV']} rows={winRows.length ? winRows : [1, 2, 3, 4, 5]} /><CompactTable title="Revenue Erosion" amount={erosion ? formatRa(erosion.total) : '—'} headers={['S.No.', 'Account', 'Description', 'Amount']} rows={erosionRows.length ? erosionRows : [1, 2, 3, 4, 5]} /></aside></section>}</main></>;
 }

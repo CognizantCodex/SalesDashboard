@@ -334,6 +334,67 @@ def test_bcmi_orig_ra_summary_uses_forecast_adjustments_for_both_sls_fields(monk
     assert payload.json()["filter"] == {"SLS": "Adjustments", "SLSM": "Adjustments"}
 
 
+def test_ra_achieved_sums_converted_adm_de_and_qea(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_ra_upload",
+        lambda: {
+            "available": True,
+            "sourceFilename": "ra-path.xlsx",
+            "convertedSoFar": {"q3": 125_000, "q4": 275_000},
+        },
+    )
+
+    payload = client.get("/api/bcmi-orig/ra-achieved")
+
+    assert payload.status_code == 200
+    assert payload.json()["metrics"] == {"q3": 125_000.0, "q4": 275_000.0}
+    assert payload.json()["filter"] == "Converted so far: ADM + DE + QEA"
+
+
+def test_ra_achieved_uses_converted_detail_rows_for_existing_uploads(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "load_ra_upload",
+        lambda: {
+            "available": True,
+            "sourceFilename": "ra-path.xlsx",
+            "sheets": [
+                {
+                    "sheetName": "Q3 BU RA - Americas",
+                    "headers": ["Category", "Account", "ADM", "DE", "QEA", "Remarks"],
+                    "rows": [
+                        ["New Deal", "In-progress deal", 1, 2, 3, "In progress"],
+                        ["New Deal", "Converted deal", 10, 20, 30, "Converted so far"],
+                    ],
+                }
+            ],
+        },
+    )
+
+    payload = client.get("/api/bcmi-orig/ra-achieved")
+
+    assert payload.status_code == 200
+    assert payload.json()["metrics"] == {"q3": 60.0}
+
+
+def test_q3_ra_achieved_subtotal_finds_subtotal_and_sums_excel_columns_ab_to_aj():
+    values = [[] for _ in range(140)]
+    values[137] = ["Subtotal"] + [None] * 35
+    values[137][27:36] = [10, 20, 30, 40, 50, 60, 70, 80, 90]
+
+    assert forecast_agent._q3_ra_achieved_subtotal(values) == 450
+
+
+def test_ra_converted_so_far_total_reads_the_summary_row():
+    values = [
+        ["RA achieved", "ADM", "DE", "QEA"],
+        ["Converted so far", 125_000, 50_000, 25_000],
+    ]
+
+    assert forecast_agent._ra_converted_so_far_total(values) == 200_000
+
+
 def test_bcmi_orig_erosion_maps_and_sorts_saved_erosion_rows(monkeypatch):
     monkeypatch.setattr(main, "load_erosion_upload", lambda: {
         "available": True,
