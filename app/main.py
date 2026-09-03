@@ -1517,7 +1517,7 @@ async def bcmi_orig_ra_achieved() -> dict:
         "available": bool(metrics),
         "metrics": {period: _to_number(metrics.get(period)) for period in ("q3", "q4") if period in metrics},
         "sourceFilename": upload.get("sourceFilename"),
-        "filter": "Converted so far: ADM + DE + QEA",
+        "filter": "Subtotal: AB:AJ",
     }
 
 

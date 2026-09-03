@@ -1166,10 +1166,11 @@ def _ra_converted_so_far_total(values: list[list[Any]]) -> float | None:
     return None
 
 
-def _q3_ra_achieved_subtotal(values: list[list[Any]]) -> float | None:
-    """Find the Q3 Subtotal row and sum its Excel AB:AJ cells."""
+def _ra_achieved_subtotal(values: list[list[Any]]) -> float | None:
+    """Find the RA Subtotal row and sum its Excel AB:AJ cells."""
     for row in values:
-        if not any("subtotal" in str(cell or "").strip().casefold() for cell in row):
+        labels = ["".join(character for character in str(cell or "").casefold() if character.isalnum()) for cell in row]
+        if not any("subtotal" in label for label in labels):
             continue
         if len(row) > max(Q3_RA_ACHIEVED_COLUMNS):
             return sum(_to_number(_cell(row, column)) for column in Q3_RA_ACHIEVED_COLUMNS)
@@ -1182,14 +1183,9 @@ def parse_ra_workbook(file_bytes: bytes, filename: str) -> dict[str, Any]:
     converted_so_far: dict[str, float] = {}
     for sheet_name in RA_WORKBOOK_SHEETS:
         values = _read_sheet(file_bytes, filename, sheet_name)
-        if sheet_name.startswith("Q3"):
-            subtotal = _q3_ra_achieved_subtotal(values)
-            if subtotal is not None:
-                converted_so_far["q3"] = subtotal
-        else:
-            converted_total = _ra_converted_so_far_total(values)
-            if converted_total is not None:
-                converted_so_far["q4"] = converted_total
+        subtotal = _ra_achieved_subtotal(values)
+        if subtotal is not None:
+            converted_so_far["q3" if sheet_name.startswith("Q3") else "q4"] = subtotal
         header_index = next(
             (
                 index

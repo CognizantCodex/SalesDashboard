@@ -349,7 +349,7 @@ def test_ra_achieved_sums_converted_adm_de_and_qea(monkeypatch):
 
     assert payload.status_code == 200
     assert payload.json()["metrics"] == {"q3": 125_000.0, "q4": 275_000.0}
-    assert payload.json()["filter"] == "Converted so far: ADM + DE + QEA"
+    assert payload.json()["filter"] == "Subtotal: AB:AJ"
 
 
 def test_ra_achieved_uses_converted_detail_rows_for_existing_uploads(monkeypatch):
@@ -378,12 +378,12 @@ def test_ra_achieved_uses_converted_detail_rows_for_existing_uploads(monkeypatch
     assert payload.json()["metrics"] == {"q3": 60.0}
 
 
-def test_q3_ra_achieved_subtotal_finds_subtotal_and_sums_excel_columns_ab_to_aj():
+def test_ra_achieved_subtotal_finds_subtotal_and_sums_excel_columns_ab_to_aj():
     values = [[] for _ in range(140)]
-    values[137] = ["Subtotal"] + [None] * 35
+    values[137] = ["Sub Total"] + [None] * 35
     values[137][27:36] = [10, 20, 30, 40, 50, 60, 70, 80, 90]
 
-    assert forecast_agent._q3_ra_achieved_subtotal(values) == 450
+    assert forecast_agent._ra_achieved_subtotal(values) == 450
 
 
 def test_ra_converted_so_far_total_reads_the_summary_row():
