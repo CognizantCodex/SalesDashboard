@@ -342,18 +342,16 @@ def _frontier_model_quality_data(frontier_upload: dict) -> tuple[list[dict], lis
         and str(_cell(row, model_column) or "").strip()
     ]
     dated_rows = [(row, _pipeline_date(_cell(row, close_date_column))) for row in filtered]
-    # Use the current Monday–Sunday period rather than the latest date contained
-    # in a workbook, which may include forecast dates years ahead.
-    this_week_start = date.today() - timedelta(days=date.today().weekday())
-    this_week_end = this_week_start + timedelta(days=6)
-    last_week_rows = [
+    # Both Frontier Model views use deals closing in the current calendar year.
+    current_year = date.today().year
+    current_year_rows = [
         row for row, value in dated_rows
-        if value is not None and this_week_start <= value <= this_week_end
+        if value is not None and value.year == current_year
     ]
 
     model_totals: dict[str, float] = {}
     opportunities: dict[str, dict] = {}
-    for row in last_week_rows:
+    for row in current_year_rows:
         model = str(_cell(row, model_column) or "").strip()
         tcv = _to_number(_cell(row, tcv_column))
         model_totals[model] = model_totals.get(model, 0.0) + tcv
@@ -388,7 +386,7 @@ def _quality_pipeline_payload(
     total_rows: list[list] | None = None,
     frontier_upload: dict | None = None,
 ) -> dict:
-    if not rows:
+    if not rows and not total_rows:
         return {"available": False, "rows": [], "offerings": [], "campaigns": [], "opportunities": [], "campaignOpportunities": [], "database": {"table": "quality_pipeline_bcm_upload + quality_pipeline_insurance_upload", "rowsSaved": 0}}
 
     col_map = {header: index for index, header in enumerate(headers) if header}
@@ -420,14 +418,15 @@ def _quality_pipeline_payload(
             missing.append("Offering/Solutions")
         raise ValueError(f"Missing columns: {', '.join(missing)}")
 
-    # The headline Quality of Pipeline table always reflects the complete BCM
-    # plus Insurance pipeline uploads. Charts and opportunity lists use `rows`,
-    # the separately persisted recent subset.
+    # Offerings and campaigns use the full current-year pipeline.
     totals = {"Qualified": {period: 0.0 for period in period_columns}, "Unqualified": {period: 0.0 for period in period_columns}}
     display_rows = _latest_pipeline_week_rows(headers, rows)
     offering_totals: dict[str, float] = {}
     campaign_totals: dict[str, float] = {}
     candidates: list[list] = []
+    close_date_column = _get_column(col_map, "Estimated Deal Close Date", "Deal Close Date")
+    close_year_column = _get_column(col_map, "EDC Year")
+    current_year = date.today().year
     for row in total_rows if total_rows is not None else rows:
         stage = str(row[stage_column] if stage_column < len(row) else "").strip()
         label = "Qualified" if stage == "Qualified" else "Unqualified" if stage == "Un-Qualified" else None
@@ -438,20 +437,15 @@ def _quality_pipeline_payload(
             continue
         for period, index in period_columns.items():
             totals[label][period] += _to_number(row[index] if index is not None and index < len(row) else 0)
-    for row in display_rows:
-        stage = str(row[stage_column] if stage_column < len(row) else "").strip()
-        if stage not in {"Qualified", "Un-Qualified"}:
-            continue
-        sub_status = str(row[sub_status_column] if sub_status_column is not None and sub_status_column < len(row) else "").strip().casefold()
-        if sub_status == "negotiation":
-            continue
-        total_tcv = _to_number(row[period_columns["total"]] if period_columns["total"] is not None and period_columns["total"] < len(row) else 0)
-        offering = str(row[offering_column] if offering_column < len(row) else "").strip() or "Unspecified"
-        offering_totals[offering] = offering_totals.get(offering, 0.0) + total_tcv
-        campaign = campaign_name(row)
-        if campaign:
-            campaign_totals[campaign] = campaign_totals.get(campaign, 0.0) + total_tcv
-        candidates.append(row)
+        close_date = _pipeline_date(_cell(row, close_date_column))
+        close_year = close_date.year if close_date is not None else _to_number(_cell(row, close_year_column))
+        if close_year == current_year:
+            offering = str(_cell(row, offering_column) or "").strip() or "Unspecified"
+            offering_totals[offering] = offering_totals.get(offering, 0.0) + _to_number(_cell(row, period_columns["total"]))
+            campaign = campaign_name(row)
+            if campaign:
+                campaign_totals[campaign] = campaign_totals.get(campaign, 0.0) + _to_number(_cell(row, period_columns["total"]))
+            candidates.append(row)
 
     def top_categories(totals_by_category: dict[str, float]) -> list[dict]:
         categories = sorted(totals_by_category.items(), key=lambda item: item[1], reverse=True)[:3]
@@ -461,8 +455,6 @@ def _quality_pipeline_payload(
     top_offerings = top_categories(offering_totals)
     top_campaigns = top_categories(campaign_totals)
     frontier_models, frontier_model_opportunities = _frontier_model_quality_data(frontier_upload or {})
-    selected_offerings = {item["name"] for item in top_offerings}
-    selected_campaigns = {item["name"] for item in top_campaigns}
     opportunities: dict[str, dict] = {}
     campaign_opportunities: dict[str, dict] = {}
     for row in candidates:
@@ -473,13 +465,12 @@ def _quality_pipeline_payload(
         key = identifier or f"{account}|{description}"
         total_tcv = _to_number(row[period_columns["total"]] if period_columns["total"] is not None and period_columns["total"] < len(row) else 0)
         year_tcv = _to_number(row[period_columns["year"]] if period_columns["year"] is not None and period_columns["year"] < len(row) else 0)
-        if offering in selected_offerings:
-            item = opportunities.setdefault(key, {"account": account, "description": description, "offering": offering, "totalTcv": 0.0, "yearTcv": 0.0})
-            item["totalTcv"] += total_tcv
-            item["yearTcv"] += year_tcv
+        item = opportunities.setdefault(key, {"account": account, "description": description, "offering": offering, "totalTcv": 0.0, "yearTcv": 0.0})
+        item["totalTcv"] += total_tcv
+        item["yearTcv"] += year_tcv
 
         campaign = campaign_name(row)
-        if campaign in selected_campaigns:
+        if campaign:
             campaign_item = campaign_opportunities.setdefault(key, {"account": account, "description": description, "campaign": campaign, "totalTcv": 0.0, "yearTcv": 0.0})
             campaign_item["totalTcv"] += total_tcv
             campaign_item["yearTcv"] += year_tcv

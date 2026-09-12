@@ -284,6 +284,9 @@ def test_quality_pipeline_uses_two_week_rows_and_combines_top_opportunities():
         ["Old Opportunity", "Qualified", "", "Excluded", "Account E", "Opportunity E", "5", "Campaign D", 99, 99, 99, 99, 999],
     ]
 
+    headers.append("EDC Year")
+    for index, row in enumerate(rows):
+        row.append(main.date.today().year if index < 4 else main.date.today().year - 1)
     recent = main._recent_pipeline_rows(headers, rows)
     payload = main._quality_pipeline_payload(headers, recent, "pipeline.xlsx", rows)
 
@@ -1039,3 +1042,87 @@ def test_workable_demand_skill_location_uses_latest_week_bcm_and_insurance_2():
         {"skill": ".Net", "us": 0.0, "india": 1.0},
         {"skill": "UI - React/Angular", "us": 1.0, "india": 1.0},
     ]
+
+
+@pytest.mark.parametrize("year", [2026, 2027])
+def test_frontier_models_use_current_year_and_top_six_tcv(monkeypatch, year):
+    from datetime import date
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(year, 9, 11)
+
+    monkeypatch.setattr(main, "date", Today)
+    headers = ["BU", "Frontier Model", "Deal Close Date", "Overall TCV",
+               "Parent Customer", "Opportunity Name", "WinZone Opportunity ID"]
+    rows = [
+        ["Banking & Capital Markets - NA", "Model A", f"{year}-01-01", 10, "A", "First", "1"],
+        ["Insurance 2", "Model B", f"{year}-12-31", 80, "B", "Last", "8"],
+    ] + [
+        ["Insurance 2", "Model A", f"{year}-06-15", i * 10, "A", str(i), str(i)]
+        for i in range(2, 8)
+    ] + [
+        ["Insurance 2", "Excluded", value, 9999, "X", "Excluded", str(value)]
+        for value in [f"{year - 1}-12-31", f"{year + 1}-01-01", "invalid", None]
+    ]
+    models, opportunities = main._frontier_model_quality_data({"headers": headers, "rows": rows})
+    assert {item["name"]: item["totalTcv"] for item in models} == {"Model A": 280, "Model B": 80}
+    assert sum(item["percent"] for item in models) == pytest.approx(100)
+    assert [item["totalTcv"] for item in opportunities] == [80, 70, 60, 50, 40, 30]
+
+
+@pytest.mark.parametrize("year", [2026, 2027])
+def test_offerings_use_full_current_year_pipeline(monkeypatch, year):
+    from datetime import date
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(year, 9, 11)
+
+    monkeypatch.setattr(main, "date", Today)
+    headers = ["Grouped Sales Stage", "Offering/Solutions", "CY Q3 $", "CY Q4 $",
+               "CY $", "NY $", "Net TCV Share", "Estimated Deal Close Date",
+               "Opportunity Name", "WinZone Opportunity ID", "Sub-Status"]
+    rows = [["Qualified", "Offering A", 0, 0, 1, 0, i * 10,
+             f"{year}-01-01" if i < 8 else f"{year}-12-31", str(i), str(i), ""]
+            for i in range(1, 9)]
+    rows += [["Qualified", "Excluded", 0, 0, 1, 0, 9999, value, "X", "X", ""]
+             for value in [f"{year - 1}-12-31", f"{year + 1}-01-01", "invalid"]]
+    rows.append(["Qualified", "Excluded", 0, 0, 1, 0, 9999, f"{year}-06-01", "N", "N", "Negotiation"])
+    payload = main._quality_pipeline_payload(headers, rows[:1], "pipeline.xlsx", rows)
+    assert payload["offerings"] == [{"name": "Offering A", "totalTcv": 360, "percent": 100}]
+    assert [item["totalTcv"] for item in payload["opportunities"]] == [80, 70, 60, 50, 40, 30]
+    assert main._quality_pipeline_payload(headers, [], "pipeline.xlsx", rows)["offerings"] == payload["offerings"]
+
+
+@pytest.mark.parametrize("year", [2026, 2027])
+def test_campaigns_use_current_year_and_rank_across_all_themes(monkeypatch, year):
+    from datetime import date
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(year, 9, 11)
+
+    monkeypatch.setattr(main, "date", Today)
+    headers = ["Grouped Sales Stage", "Offering/Solutions", "CY Q3 $", "CY Q4 $",
+               "CY $", "NY $", "Net TCV Share", "Estimated Deal Close Date",
+               "Opportunity Name", "WinZone Opportunity ID", "Sub-Status", "Campaign Theme"]
+    rows = [["Qualified", "Offering A", 0, 0, 1, 0, tcv,
+             f"{year}-01-01" if i < 6 else f"{year}-12-31", str(i), str(i), "", theme]
+            for i, (theme, tcv) in enumerate([
+                ("A", 100), ("A", 100), ("B", 90), ("B", 90),
+                ("C", 80), ("C", 80), ("D", 150), ("D", 1)])]
+    rows += [["Qualified", "Offering A", 0, 0, 1, 0, 9999, value, "X", "X", "", "Excluded"]
+             for value in [f"{year - 1}-12-31", f"{year + 1}-01-01", "invalid"]]
+    rows += [["Qualified", "Offering A", 0, 0, 1, 0, 9999, f"{year}-06-01", "X", "X", "", theme]
+             for theme in [None, "", "N/A", "-"]]
+    rows.append(["Qualified", "Offering A", 0, 0, 1, 0, 9999, f"{year}-06-01", "N", "N", "Negotiation", "Excluded"])
+    payload = main._quality_pipeline_payload(headers, rows[:1], "pipeline.xlsx", rows)
+    assert [(item["name"], item["totalTcv"]) for item in payload["campaigns"]] == [("A", 200), ("B", 180), ("C", 160)]
+    assert sum(item["percent"] for item in payload["campaigns"]) == pytest.approx(100)
+    assert [item["totalTcv"] for item in payload["campaignOpportunities"]] == [150, 100, 100, 90, 90, 80]
+    assert payload["campaignOpportunities"][0]["campaign"] == "D"
+    assert main._quality_pipeline_payload(headers, [], "pipeline.xlsx", rows)["campaigns"] == payload["campaigns"]
